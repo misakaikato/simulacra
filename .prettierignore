@@ -1,0 +1,7 @@
+node_modules/
+dist/
+gui/dist/
+simulacra-data/
+bun.lock
+specs/
+decisions/
