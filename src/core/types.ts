@@ -372,6 +372,7 @@ export interface ProviderFailure {
 	readonly agentId: EntityId;
 	readonly reason: string;
 	readonly retryable: boolean;
+	readonly excType?: string;
 }
 
 export interface RoundContext {
