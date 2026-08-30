@@ -275,6 +275,37 @@ describe("World snapshots", () => {
 		expect(restoreWorld(world.snapshot()).hash()).toBe(world.hash());
 	});
 
+	test("snapshot and restore keep the declaration order of entities and columns", () => {
+		const world = createWorld();
+		for (const d of [
+			decl({ name: "zeta", dtype: "f64", entity: "post" }),
+			decl({ name: "zeta", dtype: "f64" }),
+			decl({ name: "alpha", dtype: "str", owner: "persona" }),
+			decl({ name: "mid", dtype: "i32" }),
+		]) {
+			const r = world.declare(d);
+			if (!r.ok) throw new Error(r.error.message);
+		}
+		const [id] = world.create(
+			"agent",
+			[{ zeta: 1, "persona.alpha": "a", mid: 2 }],
+			rngFromSeed(8, []),
+		);
+		const names = world.columns("agent").map((c) => c.name);
+		expect(names).toEqual(["zeta", "persona.alpha", "mid"]);
+		const restored = restoreWorld(JSON.parse(JSON.stringify(world.snapshot())));
+		expect(restored.entities).toEqual(["post", "agent"]);
+		expect(restored.columns("agent").map((c) => c.name)).toEqual(names);
+		expect(Object.keys(restored.row("agent", id!) ?? {})).toEqual(
+			Object.keys(world.row("agent", id!) ?? {}),
+		);
+		expect(restored.hash()).toBe(world.hash());
+	});
+
+	test("the internal write handle is not exported from the world module", async () => {
+		expect(Object.keys(await import("../../src/core/world"))).not.toContain("internalOf");
+	});
+
 	test("env values are read back typed and survive snapshots", () => {
 		const world = setup();
 		applyEffects(

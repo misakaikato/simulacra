@@ -1,5 +1,6 @@
 import { hashOf } from "./hash";
 import { newEntityId } from "./ids";
+import { attachInternals, type WorldInternals } from "./internal/worldInternals";
 import type { ColumnConflict, ReadonlyColumn, Rng, World } from "./protocols";
 import { err, ok } from "./result";
 import type {
@@ -180,6 +181,18 @@ const mergeValues = (store: ColumnStore, existing: Scalar, incoming: Scalar): Sc
 	}
 };
 
+const mergeChecked = (
+	store: ColumnStore,
+	existing: Scalar,
+	incoming: Scalar,
+): Result<Scalar, string> => {
+	const merged = mergeValues(store, existing, incoming);
+	const checked = coerce(store.dtype, merged);
+	return checked.ok
+		? checked
+		: err(`merge result ${String(merged)} not representable as ${store.dtype}`);
+};
+
 const growNumeric = <A extends Float64Array | Int32Array | Uint8Array>(
 	data: A,
 	make: (n: number) => A,
@@ -267,44 +280,6 @@ const snapshotColumn = (store: ColumnStore, count: number): ColumnSnapshot => {
 			return { decl: store.decl, encoding: "base64", data: encodeNumeric(store, count) };
 	}
 };
-
-export interface WorldInternals {
-	insertRow(
-		entity: string,
-		id: EntityId,
-		row: Readonly<Record<string, Scalar>>,
-	): Result<void, string>;
-	deleteRow(entity: string, id: EntityId): Result<void, string>;
-	setCell(
-		entity: string,
-		id: EntityId,
-		column: string,
-		value: Scalar,
-		tick: number,
-	): Result<void, string>;
-	setCells(
-		entity: string,
-		column: string,
-		ids: readonly EntityId[],
-		values: readonly Scalar[],
-		tick: number,
-	): Result<void, string>;
-	incCell(
-		entity: string,
-		id: EntityId,
-		column: string,
-		delta: number,
-		tick: number,
-	): Result<void, string>;
-	appendCell(
-		entity: string,
-		id: EntityId,
-		column: string,
-		value: string,
-		tick: number,
-	): Result<void, string>;
-	setEnv(key: string, value: JsonValue): void;
-}
 
 class ColumnarWorld implements World, WorldInternals {
 	private readonly tables = new Map<string, EntityTable>();
@@ -414,17 +389,13 @@ class ColumnarWorld implements World, WorldInternals {
 	}
 
 	snapshot(): WorldSnapshot {
-		const entities: EntitySnapshot[] = [...this.tables.values()]
-			.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))
-			.map((table) => ({
-				name: table.name,
-				ids: [...table.ids],
-				columns: [...table.columns.values()]
-					.sort((a, b) =>
-						a.qualified < b.qualified ? -1 : a.qualified > b.qualified ? 1 : 0,
-					)
-					.map((store) => snapshotColumn(store, table.ids.length)),
-			}));
+		const entities: EntitySnapshot[] = [...this.tables.values()].map((table) => ({
+			name: table.name,
+			ids: [...table.ids],
+			columns: [...table.columns.values()].map((store) =>
+				snapshotColumn(store, table.ids.length),
+			),
+		}));
 		const env: Record<string, JsonValue> = {};
 		for (const [k, v] of this.envMap) env[k] = v;
 		return { version: 1, entities, env };
@@ -495,9 +466,10 @@ class ColumnarWorld implements World, WorldInternals {
 		if (!resolved.ok) return err(`${entity}.${column}: ${resolved.error}`);
 		const next =
 			store.writtenAt[i] === tick
-				? mergeValues(store, readCell(store, i), resolved.value)
-				: resolved.value;
-		writeCell(store, i, next, tick);
+				? mergeChecked(store, readCell(store, i), resolved.value)
+				: ok(resolved.value);
+		if (!next.ok) return err(`${entity}.${column}: ${next.error}`);
+		writeCell(store, i, next.value, tick);
 		return ok(undefined);
 	}
 
@@ -516,7 +488,7 @@ class ColumnarWorld implements World, WorldInternals {
 		if (table === undefined) return err(`unknown entity '${entity}'`);
 		const store = table.columns.get(column);
 		if (store === undefined) return err(`undeclared column ${entity}.${column}`);
-		const prepared: { readonly i: number; readonly value: Scalar }[] = [];
+		const pending = new Map<number, Scalar>();
 		for (let k = 0; k < ids.length; k += 1) {
 			const id = ids[k];
 			const i = id === undefined ? undefined : table.index.get(id);
@@ -525,13 +497,16 @@ class ColumnarWorld implements World, WorldInternals {
 			const raw = values[k] ?? null;
 			const resolved = raw === null ? ok(defaultOf(store)) : coerce(store.dtype, raw);
 			if (!resolved.ok) return err(`${entity}.${column}[${k}]: ${resolved.error}`);
-			prepared.push({ i, value: resolved.value });
-		}
-		for (const { i, value } of prepared) {
+			const previous =
+				pending.get(i) ?? (store.writtenAt[i] === tick ? readCell(store, i) : undefined);
 			const next =
-				store.writtenAt[i] === tick ? mergeValues(store, readCell(store, i), value) : value;
-			writeCell(store, i, next, tick);
+				previous === undefined
+					? ok(resolved.value)
+					: mergeChecked(store, previous, resolved.value);
+			if (!next.ok) return err(`${entity}.${column}[${k}]: ${next.error}`);
+			pending.set(i, next.value);
 		}
+		for (const [i, value] of pending) writeCell(store, i, value, tick);
 		return ok(undefined);
 	}
 
@@ -646,24 +621,15 @@ const defaultOf = (store: ColumnStore): Scalar => {
 	return coerced.ok ? coerced.value : readCell(newStore(store.decl, store.qualified, 1), 0);
 };
 
-const internals = new WeakMap<World, WorldInternals>();
-
-export const internalOf = (world: World): WorldInternals => {
-	const found = internals.get(world);
-	if (found === undefined)
-		throw new TypeError("world was not created by createWorld or restoreWorld");
-	return found;
-};
-
 export const createWorld = (): World => {
 	const world = new ColumnarWorld();
-	internals.set(world, world);
+	attachInternals(world, world);
 	return world;
 };
 
 export const restoreWorld = (snap: WorldSnapshot): World => {
 	const world = new ColumnarWorld();
-	internals.set(world, world);
+	attachInternals(world, world);
 	for (const entity of snap.entities) {
 		for (const column of entity.columns) {
 			const declared = world.declare(column.decl);

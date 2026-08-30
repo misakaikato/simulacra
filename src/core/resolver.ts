@@ -1,6 +1,6 @@
 import type { World } from "./protocols";
 import type { Effect, EffectRejection, EffectReport, LogicalTime, Result } from "./types";
-import { internalOf, type WorldInternals } from "./world";
+import { internalOf, type WorldInternals } from "./internal/worldInternals";
 
 const applyOne = (w: WorldInternals, effect: Effect, tick: number): Result<void, string> => {
 	switch (effect.op) {

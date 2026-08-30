@@ -149,6 +149,16 @@ describe("built-in activation policies", () => {
 });
 
 describe("registerBuiltinPolicies", () => {
+	test("returns the registration Result and reports the duplicate on a second call", () => {
+		const registry = createRegistry();
+		expect(registerBuiltinPolicies(registry).ok).toBe(true);
+		expect(registerBuiltinPolicies(registry)).toEqual({
+			ok: false,
+			error: { kind: "DuplicatePlugin", slot: "policies", pluginKind: "allAgents" },
+		});
+		expect(registry.policies.kinds()).toHaveLength(5);
+	});
+
 	test("registers the five kinds and builds them from spec options", () => {
 		const registry = createRegistry();
 		registerBuiltinPolicies(registry);
