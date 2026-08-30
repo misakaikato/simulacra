@@ -188,3 +188,51 @@ export const AuditPlanSchema = z.object({
 	claimType: z.enum(["exploratory", "mechanism", "policy"]).default("exploratory"),
 	concurrency: z.number().int().positive().default(1),
 });
+
+export const ColumnDeclSchema = z.object({
+	entity: z.string().min(1),
+	name: z.string().min(1),
+	dtype: ColumnDtypeSchema,
+	default: ScalarSchema,
+	owner: z.string().min(1),
+	merge: z.enum(["last", "sum", "max", "append"]),
+});
+
+export const ColumnSnapshotSchema = z.discriminatedUnion("encoding", [
+	z.object({ decl: ColumnDeclSchema, encoding: z.literal("base64"), data: z.string() }),
+	z.object({ decl: ColumnDeclSchema, encoding: z.literal("strings"), data: z.array(z.string()) }),
+	z.object({
+		decl: ColumnDeclSchema,
+		encoding: z.literal("stringLists"),
+		data: z.array(z.array(z.string())),
+	}),
+]);
+
+export const WorldSnapshotSchema = z.object({
+	version: z.literal(1),
+	entities: z.array(
+		z.object({
+			name: z.string().min(1),
+			ids: z.array(z.string()),
+			columns: z.array(ColumnSnapshotSchema),
+		}),
+	),
+	env: JsonObjectSchema,
+});
+
+export const LogicalTimeSchema = z.object({
+	tick: z.number().int().nonnegative(),
+	substep: z.number().int().nonnegative(),
+	seq: z.number().int().nonnegative(),
+});
+
+export const CheckpointMetaSchema = z.object({
+	version: z.literal(1),
+	scenarioHash: z.string().min(1),
+	digest: z.string().min(1),
+	lastEventId: z.string().min(1),
+	worldHash: z.string().min(1),
+	tick: z.number().int().nonnegative(),
+});
+
+export const ClockStateSchema = z.object({ now: LogicalTimeSchema });
