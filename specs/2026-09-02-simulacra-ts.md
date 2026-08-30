@@ -751,3 +751,26 @@ simulacra/
 - 交付物无过程残留。
 - 类型先行：先写类型与接口，再写实现；公共类型全 readonly；用判别联合替代布尔标志与可选字段堆叠。
 - 纯函数优先：能不碰 I/O 的逻辑写成纯函数并单测；副作用集中在四处（gateway、log、fs、网络）。
+
+## 附录 A：A 阶段第 1 到 5 步裁定的细节
+
+以下细节在规格正文未定或与正文签名有差异，以本附录为准：
+
+- `ulid(rng?: Rng)`：内核路径必须传 rng；不传时用 `crypto.getRandomValues`，仅用于非模拟语义的 id（如 runId）。单调状态为模块级。
+- `prettySink` 同时接受 `WritableStream` 与 `(line: string) => void`，另有 `{ color?: boolean }`。
+- `MemoryEventLog.sql` 返回 `[]` 并记 warn（构造函数可注入 Logger）。
+- 检查点签名：`saveCheckpoint(state, dir)` 与 `loadCheckpoint(dir, scenarioHash)`，`state` 为 `{ world, clock, executors, providers, rngPaths, scenarioHash, digest, lastEventId }`；`clock.json` 只存 `{ now }`，已调度回调不序列化，续跑时由 Scenario 步骤重新调度。
+- `overrideScenario` 错误为 `UnknownOverride | InvalidOverride`（覆盖后 schema 校验失败）；路径先从 Scenario 根解析，找不到再回退到 `params`。
+- `ActionRegistry.register` 错误为 `DuplicateAction | DuplicateFallback`；`params` 必须是 `z.object`，否则抛 `TypeError`；`toolSchemas` 遇未知动作名抛 `RangeError`（内核误用，不是数据错误）。
+- `InstrumentSpec = { kind, name?, options?, every? }`，`every` 为采集间隔 tick 数，默认 1。
+- `PromptOptions`：`personaFormat: plain|bullets|table`、`instructionOrder: first|last`、`rolePlacement: system|user`、`naming: id|name|anonymous`、`memoryRepresentation: transcript|json|bullets`、`contextWindow` 正整数默认 4000。
+- `LLMSpec` 默认：`baseUrl` DeepSeek 端点、`model` `deepseek-v4-flash`、`apiKeyEnv` `SIMULACRA_LLM_API_KEY`。
+- `profileHourly(column)`：`strlist` 列为 24 个概率字符串按小时索引，`f64` 列视为常数概率；`hour = floor(tick / ticksPerHour) % 24`，`ticksPerHour` 为策略选项默认 1。
+- `explicit(schedule)`：`Record<tick 字符串, EntityId[]>`，不校验 id 存在。
+- `Clock.priority` 数值小者先执行。
+- 同 tick 合并跨两次 `applyEffects` 仍生效：每列每行记录最后写入 tick；`create` 后首个 `set` 视为替换；`delete` 用 swap-remove，id 顺序变化但确定。
+- `declare` 在 merge 与 dtype 不匹配、默认值不可转换时也返回 `ColumnConflict`。
+- Scenario 族与实验、审计类型为 `DeepReadonly<z.infer<...>>`；全部接口集中在 `src/core/protocols.ts`；`src/core/hash.ts` 提供 `sha256Hex`、`canonicalJson`、`hashOf`。
+- Registry 有七类槽：actions、modules、executors、providers、policies、metrics、adapters；`PluginContext = { scenario, registry, logger }`。
+- 工具链：TypeScript 钉 `^5`；zod 4，`ActionDef<P extends z.ZodType>`。
+- `.prettierignore` 排除 `specs/` 与 `decisions/`。
