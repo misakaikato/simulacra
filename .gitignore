@@ -1,0 +1,9 @@
+node_modules/
+dist/
+gui/dist/
+simulacra-data/
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
+.env*
+.DS_Store
