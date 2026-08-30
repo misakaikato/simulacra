@@ -774,3 +774,7 @@ simulacra/
 - Registry 有七类槽：actions、modules、executors、providers、policies、metrics、adapters；`PluginContext = { scenario, registry, logger }`。
 - 工具链：TypeScript 钉 `^5`；zod 4，`ActionDef<P extends z.ZodType>`。
 - `.prettierignore` 排除 `specs/` 与 `decisions/`。
+- 快照保留列的声明顺序：`snapshot()` 与 `restoreWorld` 后 `columns(entity)` 与 `row()` 的键序必须与原世界一致；哈希仍按规范化 JSON 计算。原因：续跑后 prompt 渲染若依赖列序，promptHash 必须与直跑一致。
+- 合并结果也要过 dtype 校验：`merge` 得到的值不能表示为目标 dtype（如 i32 溢出）时整条效果进入 rejected。
+- 绕过 `applyEffects` 的内部写入句柄不得从任何公共模块导出；只允许 `world.ts` 与 `resolver.ts` 之间私下共享（例如放在 `src/core/internal/` 且 `src/index.ts` 永不再导出）。
+- 内置插件注册函数（`registerBuiltinPolicies` 等）不得丢弃 `Result`：返回 `Result<void, DuplicatePlugin>` 或在重复时抛出。
