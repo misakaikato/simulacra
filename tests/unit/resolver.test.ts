@@ -26,6 +26,7 @@ const setup = () => {
 		column("text", "str", "append"),
 		column("list", "strlist", "append"),
 		column("flag", "bool", "sum"),
+		column("isum", "i32", "sum"),
 	]) {
 		const r = world.declare(d);
 		if (!r.ok) throw new Error(r.error.message);
@@ -85,6 +86,47 @@ describe("applyEffects merge rules within one tick", () => {
 		expect(world.row("agent", id)?.sum).toBe(3);
 		applyEffects(world, [set(id, "sum", 10)], timeAt(2));
 		expect(world.row("agent", id)?.sum).toBe(10);
+	});
+
+	test("setCell rejects a merge whose result is not representable as the dtype", () => {
+		const { world, id } = setup();
+		const report = applyEffects(
+			world,
+			[set(id, "isum", 2147483647), set(id, "isum", 1)],
+			timeAt(1),
+		);
+		expect(report.applied).toBe(1);
+		expect(report.rejected.map((r) => r.reason)).toEqual([
+			"agent.isum: merge result 2147483648 not representable as i32",
+		]);
+		expect(world.row("agent", id)?.isum).toBe(2147483647);
+	});
+
+	test("setCells rejects the whole setColumn when any merged value overflows", () => {
+		const { world, id } = setup();
+		const [other] = world.create("agent", [{}], rngFromSeed(2, []));
+		const otherId = other as EntityId;
+		applyEffects(world, [set(id, "isum", 2147483647), set(otherId, "isum", 5)], timeAt(1));
+		const report = applyEffects(
+			world,
+			[
+				{
+					op: "setColumn",
+					entity: "agent",
+					column: "isum",
+					ids: [otherId, id],
+					values: [1, 1],
+					cause,
+				},
+			],
+			timeAt(1),
+		);
+		expect(report.applied).toBe(0);
+		expect(report.rejected.map((r) => r.reason)).toEqual([
+			"agent.isum[1]: merge result 2147483648 not representable as i32",
+		]);
+		expect(world.row("agent", otherId)?.isum).toBe(5);
+		expect(world.row("agent", id)?.isum).toBe(2147483647);
 	});
 
 	test("bool sum behaves as logical or", () => {

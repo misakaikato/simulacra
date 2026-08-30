@@ -1,8 +1,22 @@
 import { z } from "zod";
-import type { ActivationPolicy, Registry, Rng, WorldView } from "../core/protocols";
+import type {
+	ActivationPolicy,
+	DuplicatePlugin,
+	PluginFactory,
+	Registry,
+	Rng,
+	WorldView,
+} from "../core/protocols";
 import { parseOptions } from "../core/registry";
 import { ok } from "../core/result";
-import type { Activation, ActivationMode, EntityId, LogicalTime, Scalar } from "../core/types";
+import type {
+	Activation,
+	ActivationMode,
+	EntityId,
+	LogicalTime,
+	Result,
+	Scalar,
+} from "../core/types";
 
 const MODES: readonly ActivationMode[] = ["llm", "rule", "manual", "interview"];
 const ModeSchema = z.enum(MODES);
@@ -96,60 +110,91 @@ const stripUndefined = (o: {
 	...(o.mode === undefined ? {} : { mode: o.mode }),
 });
 
-export const registerBuiltinPolicies = (registry: Registry): void => {
+export const registerBuiltinPolicies = (registry: Registry): Result<void, DuplicatePlugin> => {
 	const { policies } = registry;
-	policies.register("allAgents", (spec) => {
-		const o = parseOptions(policies.slot, spec, CommonOptions);
-		return o.ok ? ok(allAgents(stripUndefined(o.value))) : o;
-	});
-	policies.register("bernoulli", (spec) => {
-		const o = parseOptions(
-			policies.slot,
-			spec,
-			CommonOptions.extend({ p: z.number().min(0).max(1) }),
-		);
-		return o.ok ? ok(bernoulli(o.value.p, stripUndefined(o.value))) : o;
-	});
-	policies.register("profileHourly", (spec) => {
-		const o = parseOptions(
-			policies.slot,
-			spec,
-			CommonOptions.extend({
-				column: z.string().min(1),
-				ticksPerHour: z.number().int().positive().optional(),
-			}),
-		);
-		if (!o.ok) return o;
-		const base = stripUndefined(o.value);
-		return ok(
-			profileHourly(
-				o.value.column,
-				o.value.ticksPerHour === undefined
-					? base
-					: { ...base, ticksPerHour: o.value.ticksPerHour },
-			),
-		);
-	});
-	policies.register("maskTimer", (spec) => {
-		const o = parseOptions(
-			policies.slot,
-			spec,
-			CommonOptions.extend({ maskColumn: z.string().min(1), timerColumn: z.string().min(1) }),
-		);
-		return o.ok
-			? ok(maskTimer(o.value.maskColumn, o.value.timerColumn, stripUndefined(o.value)))
-			: o;
-	});
-	policies.register("explicit", (spec) => {
-		const o = parseOptions(
-			policies.slot,
-			spec,
-			CommonOptions.extend({ schedule: z.record(z.string(), z.array(z.string())) }),
-		);
-		if (!o.ok) return o;
-		const schedule: Record<string, readonly EntityId[]> = {};
-		for (const [tick, ids] of Object.entries(o.value.schedule))
-			schedule[tick] = ids.map((id) => id as EntityId);
-		return ok(explicit(schedule, stripUndefined(o.value)));
-	});
+	const factories: readonly (readonly [string, PluginFactory<ActivationPolicy>])[] = [
+		[
+			"allAgents",
+			(spec) => {
+				const o = parseOptions(policies.slot, spec, CommonOptions);
+				return o.ok ? ok(allAgents(stripUndefined(o.value))) : o;
+			},
+		],
+		[
+			"bernoulli",
+			(spec) => {
+				const o = parseOptions(
+					policies.slot,
+					spec,
+					CommonOptions.extend({ p: z.number().min(0).max(1) }),
+				);
+				return o.ok ? ok(bernoulli(o.value.p, stripUndefined(o.value))) : o;
+			},
+		],
+		[
+			"profileHourly",
+			(spec) => {
+				const o = parseOptions(
+					policies.slot,
+					spec,
+					CommonOptions.extend({
+						column: z.string().min(1),
+						ticksPerHour: z.number().int().positive().optional(),
+					}),
+				);
+				if (!o.ok) return o;
+				const base = stripUndefined(o.value);
+				return ok(
+					profileHourly(
+						o.value.column,
+						o.value.ticksPerHour === undefined
+							? base
+							: { ...base, ticksPerHour: o.value.ticksPerHour },
+					),
+				);
+			},
+		],
+		[
+			"maskTimer",
+			(spec) => {
+				const o = parseOptions(
+					policies.slot,
+					spec,
+					CommonOptions.extend({
+						maskColumn: z.string().min(1),
+						timerColumn: z.string().min(1),
+					}),
+				);
+				return o.ok
+					? ok(
+							maskTimer(
+								o.value.maskColumn,
+								o.value.timerColumn,
+								stripUndefined(o.value),
+							),
+						)
+					: o;
+			},
+		],
+		[
+			"explicit",
+			(spec) => {
+				const o = parseOptions(
+					policies.slot,
+					spec,
+					CommonOptions.extend({ schedule: z.record(z.string(), z.array(z.string())) }),
+				);
+				if (!o.ok) return o;
+				const schedule: Record<string, readonly EntityId[]> = {};
+				for (const [tick, ids] of Object.entries(o.value.schedule))
+					schedule[tick] = ids.map((id) => id as EntityId);
+				return ok(explicit(schedule, stripUndefined(o.value)));
+			},
+		],
+	];
+	for (const [kind, factory] of factories) {
+		const registered = policies.register(kind, factory);
+		if (!registered.ok) return registered;
+	}
+	return ok(undefined);
 };
