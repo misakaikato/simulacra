@@ -256,6 +256,8 @@ export interface LLMGateway {
 	complete(req: LLMRequest): Promise<Result<LLMResponse, LLMFailure>>;
 	completeMany(reqs: readonly LLMRequest[]): Promise<readonly Result<LLMResponse, LLMFailure>[]>;
 	ledger(): Cost;
+	ledgerByPurpose(): Readonly<Record<string, Cost>>;
+	failures(): number;
 }
 
 // Event log
@@ -343,6 +345,7 @@ export interface PluginContext {
 	readonly scenario: Scenario;
 	readonly registry: Registry;
 	readonly logger: Logger;
+	readonly gateway?: LLMGateway;
 }
 
 export type PluginError =

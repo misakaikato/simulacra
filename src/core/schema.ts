@@ -118,6 +118,7 @@ export const LLMSpecSchema = z.object({
 		})
 		.prefault({}),
 	timeoutMs: z.number().int().positive().default(60000),
+	sendSeed: z.boolean().default(true),
 });
 
 export const PromptOptionsSchema = z.object({
