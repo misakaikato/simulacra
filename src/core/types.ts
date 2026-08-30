@@ -1,4 +1,25 @@
+import type { z } from "zod";
 import type { EventLog, GraphView, WorldView } from "./protocols";
+import type {
+	ArmSchema,
+	AuditPlanSchema,
+	ColumnDtypeSchema,
+	HypothesisSchema,
+	InstrumentSpecSchema,
+	LLMSpecSchema,
+	PersonaFieldSchema,
+	OutcomeSchema,
+	PersonaSamplingSchema,
+	PerturbationAxisSchema,
+	PluginSpecSchema,
+	PopulationSourceSchema,
+	PopulationSpecSchema,
+	PromptOptionsSchema,
+	ScenarioSchema,
+	SelectorPredicateSchema,
+	SelectorSchema,
+	StepSchema,
+} from "./schema";
 
 // Base types
 
@@ -34,114 +55,25 @@ export type DeepReadonly<T> = T extends (...args: never[]) => unknown
 				? { readonly [K in keyof T]: DeepReadonly<T[K]> }
 				: T;
 
-// Scenario family
+// Scenario family, derived from the zod schemas in schema.ts
 
-export type ColumnDtype = "f64" | "i32" | "bool" | "str" | "strlist";
-
-export type PersonaSampling =
-	| { readonly kind: "value"; readonly value: Scalar }
-	| {
-			readonly kind: "choice";
-			readonly choices: readonly Scalar[];
-			readonly weights?: readonly number[] | undefined;
-	  }
-	| { readonly kind: "range"; readonly min: number; readonly max: number };
-
-export interface PersonaField {
-	readonly name: string;
-	readonly dtype: ColumnDtype;
-	readonly private?: boolean | undefined;
-	readonly sampling: PersonaSampling;
-}
-
-export type PopulationSource =
-	| { readonly kind: "synthetic" }
-	| { readonly kind: "csv"; readonly path: string }
-	| { readonly kind: "json"; readonly path: string };
-
-export interface PopulationSpec {
-	readonly n: number;
-	readonly fields: readonly PersonaField[];
-	readonly source: PopulationSource;
-	readonly provenance: "demographic" | "survey" | "interview" | "synthetic";
-	readonly stratify?: Readonly<Record<string, Readonly<Record<string, number>>>> | undefined;
-}
-
-export interface PluginSpec {
-	readonly kind: string;
-	readonly name?: string | undefined;
-	readonly options?: JsonObject | undefined;
-}
+export type ColumnDtype = z.infer<typeof ColumnDtypeSchema>;
+export type PersonaSampling = DeepReadonly<z.infer<typeof PersonaSamplingSchema>>;
+export type PersonaField = DeepReadonly<z.infer<typeof PersonaFieldSchema>>;
+export type PopulationSource = DeepReadonly<z.infer<typeof PopulationSourceSchema>>;
+export type PopulationSpec = DeepReadonly<z.infer<typeof PopulationSpecSchema>>;
+export type PluginSpec = DeepReadonly<z.infer<typeof PluginSpecSchema>>;
 export type ModuleSpec = PluginSpec;
 export type ExecutorSpec = PluginSpec;
 export type ProviderSpec = PluginSpec;
 export type PolicySpec = PluginSpec;
-export interface InstrumentSpec extends PluginSpec {
-	readonly every?: number | undefined;
-}
-
-export type SelectorPredicate =
-	| JsonValue
-	| { readonly in: readonly Scalar[] }
-	| { readonly gt: number }
-	| { readonly lt: number };
-export interface Selector {
-	readonly where: Readonly<Record<string, SelectorPredicate>>;
-	readonly fraction?: number | undefined;
-	readonly n?: number | undefined;
-}
-
-export type Step =
-	| { readonly kind: "run"; readonly ticks: number }
-	| {
-			readonly kind: "intervene";
-			readonly arm: string;
-			readonly instruction?: string | undefined;
-	  }
-	| {
-			readonly kind: "questionnaire";
-			readonly name: string;
-			readonly targets?: Selector | undefined;
-	  }
-	| { readonly kind: "checkpoint" };
-
-export interface LLMSpec {
-	readonly baseUrl: string;
-	readonly model: string;
-	readonly apiKeyEnv: string;
-	readonly mode: "live" | "record" | "replay";
-	readonly recordDir?: string | undefined;
-	readonly concurrency: { readonly initial: number; readonly max: number };
-	readonly structured: "auto" | "json_schema" | "prompt";
-	readonly budget: { readonly maxCalls: number; readonly maxCompletionTokens: number };
-	readonly timeoutMs: number;
-}
-
-export interface PromptOptions {
-	readonly personaFormat: "plain" | "bullets" | "table";
-	readonly instructionOrder: "first" | "last";
-	readonly rolePlacement: "system" | "user";
-	readonly naming: "id" | "name" | "anonymous";
-	readonly memoryRepresentation: "transcript" | "json" | "bullets";
-	readonly contextWindow: number;
-}
-
-export interface Scenario {
-	readonly scenarioId: string;
-	readonly replicationId: number;
-	readonly seed: number;
-	readonly seedPath: readonly number[];
-	readonly params: JsonObject;
-	readonly population: PopulationSpec;
-	readonly modules: readonly ModuleSpec[];
-	readonly executors: readonly ExecutorSpec[];
-	readonly providers: Readonly<Record<string, ProviderSpec>>;
-	readonly policy: PolicySpec;
-	readonly instruments: readonly InstrumentSpec[];
-	readonly steps: readonly Step[];
-	readonly llm: LLMSpec;
-	readonly prompt: PromptOptions;
-}
+export type InstrumentSpec = DeepReadonly<z.infer<typeof InstrumentSpecSchema>>;
+export type SelectorPredicate = DeepReadonly<z.infer<typeof SelectorPredicateSchema>>;
+export type Selector = DeepReadonly<z.infer<typeof SelectorSchema>>;
+export type Step = DeepReadonly<z.infer<typeof StepSchema>>;
+export type LLMSpec = DeepReadonly<z.infer<typeof LLMSpecSchema>>;
+export type PromptOptions = DeepReadonly<z.infer<typeof PromptOptionsSchema>>;
+export type Scenario = DeepReadonly<z.infer<typeof ScenarioSchema>>;
 
 // Run results
 
@@ -463,52 +395,16 @@ export interface Activation {
 	readonly manualCalls?: Readonly<Record<EntityId, ActionCall>>;
 }
 
-// Experiment design
+// Experiment design, derived from the zod schemas in schema.ts
 
-export interface Arm {
-	readonly name: string;
-	readonly role: "treatment" | "control";
-	readonly overrides: JsonObject;
-	readonly selection?: Selector;
-}
-
-export interface Outcome {
-	readonly name: string;
-	readonly metric: string;
-	readonly direction: "increase" | "decrease" | "any";
-	readonly targetDistribution?: readonly number[];
-}
-
-export interface Hypothesis {
-	readonly id: string;
-	readonly claim: string;
-	readonly claimType: "exploratory" | "mechanism" | "policy";
-	readonly arms: readonly Arm[];
-	readonly outcomes: readonly Outcome[];
-}
+export type Arm = DeepReadonly<z.infer<typeof ArmSchema>>;
+export type Outcome = DeepReadonly<z.infer<typeof OutcomeSchema>>;
+export type Hypothesis = DeepReadonly<z.infer<typeof HypothesisSchema>>;
 
 // Harness
 
-export interface PerturbationAxis {
-	readonly id: string;
-	readonly level: "micro" | "meso" | "macro";
-	readonly kind: "design" | "representation";
-	readonly dimension: string;
-	readonly target: string;
-	readonly levels: readonly JsonValue[];
-}
-
-export interface AuditPlan {
-	readonly base: Scenario;
-	readonly hypothesis?: Hypothesis;
-	readonly axes: readonly PerturbationAxis[];
-	readonly design: "one_at_a_time" | "full_factorial";
-	readonly replications: number;
-	readonly models: readonly string[];
-	readonly metrics: readonly string[];
-	readonly claimType: Hypothesis["claimType"];
-	readonly concurrency: number;
-}
+export type PerturbationAxis = DeepReadonly<z.infer<typeof PerturbationAxisSchema>>;
+export type AuditPlan = DeepReadonly<z.infer<typeof AuditPlanSchema>>;
 
 export interface Condition {
 	readonly conditionId: string;
