@@ -1,0 +1,36 @@
+export const FAILURE_TYPES = {
+	budgetExhausted: "budget_exhausted",
+	structuredFallback: "structured_fallback",
+	replayMiss: "ReplayMiss",
+	circuitOpen: "CircuitOpen",
+	rateLimited: "RateLimited",
+	serverError: "ServerError",
+	clientError: "ClientError",
+	timeout: "Timeout",
+	network: "NetworkError",
+	malformed: "MalformedResponse",
+	noPrompt: "no_prompt",
+	parseFailure: "parse_failure",
+	invalidAction: "invalid_action",
+	noAvailableActions: "no_available_actions",
+	ruleThrew: "rule_threw",
+	providerThrew: "provider_threw",
+	providerContractViolation: "provider_contract_violation",
+	invalidArgs: "invalid_args",
+	unknownAction: "unknown_action",
+	noFallbackAction: "no_fallback_action",
+	effectRejected: "effect_rejected",
+	moduleStepFailed: "module_step_failed",
+	memorySummaryFailed: "memory_summary_failed",
+	notImplemented: "not_implemented",
+	consecutiveBatchFailures: "consecutive_batch_failures",
+	consecutiveModuleFailures: "consecutive_module_failures",
+	incompleteTick: "IncompleteTick",
+} as const;
+
+export type FailureType = (typeof FAILURE_TYPES)[keyof typeof FAILURE_TYPES];
+
+export const PARSE_FAILURE_TYPES: readonly string[] = [
+	FAILURE_TYPES.parseFailure,
+	FAILURE_TYPES.invalidAction,
+];

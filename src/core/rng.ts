@@ -86,3 +86,6 @@ class Xoshiro128StarStar implements Rng {
 
 export const rngFromSeed = (seed: number, path: readonly number[]): Rng =>
 	new Xoshiro128StarStar(seed, path);
+
+export const keyFromLabel = (label: string): number =>
+	Number.parseInt(sha256Hex(label).slice(0, 8), 16) >>> 0;

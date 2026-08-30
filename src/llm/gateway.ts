@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { z } from "zod";
+import { FAILURE_TYPES } from "../core/failures";
 import { hashOf, sha256Hex } from "../core/hash";
 import type { LLMFailure, LLMGateway, LLMRequest, LLMResponse } from "../core/protocols";
 import { err, ok } from "../core/result";
@@ -21,19 +22,6 @@ export interface Gateway extends LLMGateway {
 	concurrencyLimit(): number;
 	callsStarted(): number;
 }
-
-export const FAILURE_TYPES = {
-	budgetExhausted: "budget_exhausted",
-	structuredFallback: "structured_fallback",
-	replayMiss: "ReplayMiss",
-	circuitOpen: "CircuitOpen",
-	rateLimited: "RateLimited",
-	serverError: "ServerError",
-	clientError: "ClientError",
-	timeout: "Timeout",
-	network: "NetworkError",
-	malformed: "MalformedResponse",
-} as const;
 
 const MAX_RETRIES = 3;
 const BACKOFF_CAP_MULTIPLIER = 60;
