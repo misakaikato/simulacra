@@ -154,6 +154,8 @@ export interface ActivationPolicy {
 
 // Executors and components
 
+export type ModuleObservations = ReadonlyMap<EntityId, JsonObject>;
+
 export interface Executor {
 	readonly name: string;
 	readonly entity: string;
@@ -165,11 +167,19 @@ export interface Executor {
 		t: LogicalTime,
 		log: EventLog,
 		rng: Rng,
+		observations?: ModuleObservations,
 	): Promise<readonly DecisionRequest[]>;
 	act(decisions: readonly Decision[], ctx: ResolveContext): Promise<readonly Effect[]>;
 	after(decisions: readonly Decision[], report: EffectReport, log: EventLog): Promise<void>;
 	getState(): JsonValue;
 	setState(s: JsonValue): void;
+}
+
+export interface ConsolidateContext {
+	readonly t: LogicalTime;
+	readonly runId: RunId;
+	readonly seedPath: readonly number[];
+	readonly rng: Rng;
 }
 
 export interface Component {
@@ -184,6 +194,7 @@ export interface Component {
 		log: EventLog,
 	): JsonObject;
 	postAct(agentId: EntityId, decision: Decision, report: EffectReport, log: EventLog): void;
+	consolidate?(agentId: EntityId, log: EventLog, ctx: ConsolidateContext): Promise<void>;
 	getState(): JsonValue;
 	setState(s: JsonValue): void;
 }

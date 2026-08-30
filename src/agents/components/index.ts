@@ -1,0 +1,110 @@
+import { z } from "zod";
+import type { Component, LLMGateway, PluginContext, PluginError } from "../../core/protocols";
+import { PERSONA_PREFIX } from "../../core/population";
+import { parseOptions } from "../../core/registry";
+import { err, ok } from "../../core/result";
+import type { PluginSpec, Result } from "../../core/types";
+import { createGateway } from "../../llm/gateway";
+import { feedObservation } from "./feedObservation";
+import { instructions } from "./instructions";
+import { neighborhoodObservation } from "./neighborhoodObservation";
+import { persona } from "./persona";
+import { recentMemory } from "./recentMemory";
+import { summaryMemory } from "./summaryMemory";
+
+export {
+	feedObservation,
+	instructions,
+	neighborhoodObservation,
+	persona,
+	recentMemory,
+	summaryMemory,
+};
+export { CONTEXT_KEYS } from "./shared";
+
+const SLOT = "components";
+
+const PersonaOptions = z.object({
+	entity: z.string().min(1).default("agent"),
+	nameField: z.string().min(1).default("name"),
+});
+const InstructionsOptions = z.object({ text: z.string() });
+const RecentMemoryOptions = z.object({ k: z.number().int().positive().default(10) });
+const SummaryMemoryOptions = z.object({
+	threshold: z.number().int().positive().default(10),
+	maxTokens: z.number().int().positive().optional(),
+});
+const FeedOptions = z.object({ size: z.number().int().positive().default(10) });
+const NeighborhoodOptions = z.object({ radius: z.number().int().positive().default(1) });
+
+const gatewayFor = (ctx: PluginContext): Result<LLMGateway, string> => {
+	if (ctx.gateway !== undefined) return ok(ctx.gateway);
+	try {
+		return ok(createGateway(ctx.scenario.llm, { logger: ctx.logger }));
+	} catch (e) {
+		return err(e instanceof Error ? e.message : String(e));
+	}
+};
+
+export const createComponent = (
+	spec: PluginSpec,
+	ctx: PluginContext,
+): Result<Component, PluginError> => {
+	switch (spec.kind) {
+		case "persona": {
+			const o = parseOptions(SLOT, spec, PersonaOptions);
+			if (!o.ok) return o;
+			return ok(
+				persona({
+					entity: o.value.entity,
+					prefix: PERSONA_PREFIX,
+					nameField: o.value.nameField,
+					privateFields: ctx.scenario.population.fields
+						.filter((f) => f.private === true)
+						.map((f) => f.name),
+				}),
+			);
+		}
+		case "instructions": {
+			const o = parseOptions(SLOT, spec, InstructionsOptions);
+			return o.ok ? ok(instructions(o.value.text)) : o;
+		}
+		case "recentMemory": {
+			const o = parseOptions(SLOT, spec, RecentMemoryOptions);
+			return o.ok ? ok(recentMemory({ k: o.value.k })) : o;
+		}
+		case "summaryMemory": {
+			const o = parseOptions(SLOT, spec, SummaryMemoryOptions);
+			if (!o.ok) return o;
+			const gateway = gatewayFor(ctx);
+			if (!gateway.ok)
+				return err({
+					reason: "construct_failed",
+					slot: SLOT,
+					kind: spec.kind,
+					message: gateway.error,
+				});
+			return ok(
+				summaryMemory(
+					{
+						threshold: o.value.threshold,
+						...(o.value.maxTokens === undefined
+							? {}
+							: { maxTokens: o.value.maxTokens }),
+					},
+					{ gateway: gateway.value, logger: ctx.logger },
+				),
+			);
+		}
+		case "feedObservation": {
+			const o = parseOptions(SLOT, spec, FeedOptions);
+			return o.ok ? ok(feedObservation(o.value.size)) : o;
+		}
+		case "neighborhoodObservation": {
+			const o = parseOptions(SLOT, spec, NeighborhoodOptions);
+			return o.ok ? ok(neighborhoodObservation(o.value.radius)) : o;
+		}
+		default:
+			return err({ reason: "unknown_kind", slot: SLOT, kind: spec.kind });
+	}
+};
