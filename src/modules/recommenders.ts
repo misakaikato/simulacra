@@ -1,0 +1,78 @@
+import type { Recommender, Rng, WorldView } from "../core/protocols";
+import type { EntityId, LogicalTime, Scalar } from "../core/types";
+import { postsOf, type PostView } from "./posts";
+import { adjacencyOf } from "./socialGraph";
+
+export const RECOMMENDER_KINDS = ["random", "recency", "followingFirst", "homophily"] as const;
+export type RecommenderKind = (typeof RECOMMENDER_KINDS)[number];
+
+export interface RecommenderOptions {
+	readonly entity?: string;
+	readonly column?: string;
+}
+
+const numberOf = (v: Scalar | undefined): number => (typeof v === "number" ? v : 0);
+
+const byRecency = (a: PostView, b: PostView): number => b.t - a.t || b.index - a.index;
+
+const rankWith = (
+	name: RecommenderKind,
+	order: (
+		view: WorldView,
+		user: EntityId,
+		posts: readonly PostView[],
+		rng: Rng,
+	) => readonly PostView[],
+): Recommender => ({
+	name,
+	rank: (view, userIds, _t: LogicalTime, rng, k) => {
+		const posts = postsOf(view);
+		const out: Record<EntityId, readonly EntityId[]> = {};
+		for (const user of userIds) {
+			const candidates = posts.filter((p) => p.author !== user);
+			out[user] = order(view, user, candidates, rng)
+				.slice(0, k)
+				.map((p) => p.id);
+		}
+		return out;
+	},
+});
+
+export const randomRecommender = (): Recommender =>
+	rankWith("random", (_view, _user, posts, rng) => rng.shuffle(posts));
+
+export const recencyRecommender = (): Recommender =>
+	rankWith("recency", (_view, _user, posts) => [...posts].sort(byRecency));
+
+export const followingFirstRecommender = (): Recommender =>
+	rankWith("followingFirst", (view, user, posts) => {
+		const following = adjacencyOf(view).out.get(user);
+		const sorted = [...posts].sort(byRecency);
+		const followed = sorted.filter((p) => following?.has(p.author) === true);
+		const rest = sorted.filter((p) => following?.has(p.author) !== true);
+		return [...followed, ...rest];
+	});
+
+export const homophilyRecommender = (column: string, entity = "agent"): Recommender =>
+	rankWith("homophily", (view, user, posts) => {
+		const stance = view.column<Scalar>(entity, column);
+		const mine = numberOf(stance.get(user));
+		const distance = (p: PostView): number => Math.abs(numberOf(stance.get(p.author)) - mine);
+		return [...posts].sort((a, b) => distance(a) - distance(b) || byRecency(a, b));
+	});
+
+export const createRecommender = (
+	kind: RecommenderKind,
+	options: RecommenderOptions = {},
+): Recommender => {
+	switch (kind) {
+		case "random":
+			return randomRecommender();
+		case "recency":
+			return recencyRecommender();
+		case "followingFirst":
+			return followingFirstRecommender();
+		case "homophily":
+			return homophilyRecommender(options.column ?? "persona.stance", options.entity);
+	}
+};

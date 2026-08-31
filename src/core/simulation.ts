@@ -4,7 +4,7 @@ import type { CheckpointInput } from "./checkpoint";
 import { createClock } from "./clock";
 import { makeEvent, type EventInit } from "./events";
 import { FAILURE_TYPES, PARSE_FAILURE_TYPES } from "./failures";
-import { makeRunId, newEntityId, newEventId, toEntityId, toEventId } from "./ids";
+import { ZERO_EVENT_ID, makeRunId, newEntityId, newEventId, toEntityId } from "./ids";
 import { eventLogPath, openSqliteEventLog } from "./log";
 import { AGENT_ENTITY, buildPopulation } from "./population";
 import type {
@@ -57,7 +57,6 @@ import { createWorld } from "./world";
 export const RECORDINGS_DIR = "recordings";
 export const MAX_CONSECUTIVE_BATCH_FAILURES = 3;
 export const MAX_CONSECUTIVE_MODULE_FAILURES = 3;
-const ZERO_EVENT_ID = toEventId("00000000000000000000000000");
 const MANUAL = "manual";
 const ZERO_COST: Cost = {
 	llmCalls: 0,
@@ -118,6 +117,7 @@ export interface Simulation {
 	readonly log: EventLog;
 	readonly gateway: LLMGateway;
 	readonly logger: Logger;
+	initialize(): Promise<Result<void, FailureInfo>>;
 	step(activationOverride?: Activation): Promise<Result<TickReport, FailureInfo>>;
 	emit(init: EventInit, fields?: EventFields): Event;
 	integrity(): Integrity;
@@ -166,6 +166,21 @@ const failureInfo = (
 const isObject = (v: JsonValue): v is JsonObject =>
 	typeof v === "object" && v !== null && !Array.isArray(v);
 
+export type ModuleStepSummary = {
+	readonly effects: readonly Effect[];
+	readonly applied: number;
+	readonly rejected: readonly { readonly effect: Effect; readonly reason: string }[];
+};
+
+export const moduleStepSummary = (
+	effects: readonly Effect[],
+	report: EffectReport,
+): ModuleStepSummary => ({
+	effects,
+	applied: report.applied,
+	rejected: report.rejected.map((r) => ({ effect: r.effect, reason: r.reason })),
+});
+
 class KernelSimulation implements Simulation {
 	readonly runId: RunId;
 	readonly scenario: Scenario;
@@ -188,6 +203,7 @@ class KernelSimulation implements Simulation {
 	private tickLogger: Logger;
 	private eventRng: Rng;
 	private lastEventId: EventId = ZERO_EVENT_ID;
+	private initialized = false;
 	private incomplete = false;
 	private gatewayFailures = 0;
 	private counts = { activated: 0, ok: 0, failed: 0, parseFailures: 0, droppedEffects: 0 };
@@ -313,7 +329,45 @@ class KernelSimulation implements Simulation {
 		this.log.close();
 	}
 
+	async initialize(): Promise<Result<void, FailureInfo>> {
+		if (this.initialized) return ok(undefined);
+		this.initialized = true;
+		for (const slot of this.moduleSlots) {
+			const { module } = slot;
+			if (module.initialize === undefined) continue;
+			let effects: readonly Effect[];
+			try {
+				effects = await module.initialize(
+					this.world,
+					this.rootRng.fork(keyFromLabel(`module:${module.name}:initialize`)),
+				);
+			} catch (e) {
+				const d = describeError(e);
+				const message = `module '${module.name}': ${d.excType}: ${d.message}`;
+				this.recordFailure({
+					stage: "initialize",
+					excType: FAILURE_TYPES.moduleInitializeFailed,
+					message,
+					stack: d.stack,
+					retryable: false,
+				});
+				return err(
+					failureInfo(
+						"instantiate",
+						FAILURE_TYPES.moduleInitializeFailed,
+						message,
+						this.clock.now,
+					),
+				);
+			}
+			this.applyModuleEffects(slot, effects, undefined);
+		}
+		return ok(undefined);
+	}
+
 	async step(activationOverride?: Activation): Promise<Result<TickReport, FailureInfo>> {
+		const initialized = await this.initialize();
+		if (!initialized.ok) return initialized;
 		const tick = this.clock.now.tick;
 		const tickRng = this.rootRng.fork(tick);
 		this.eventRng = tickRng.fork(keyFromLabel("events"));
@@ -828,7 +882,10 @@ class KernelSimulation implements Simulation {
 		const def = this.registry.actions.get(call.name);
 		if (def === undefined) return [];
 		try {
-			return await def.resolve(call, this.resolveContext(tickRng, `${label}:${call.name}`));
+			return await def.resolve(
+				call,
+				this.resolveContext(tickRng, `${label}:${call.name}:${call.cause}`),
+			);
 		} catch (e) {
 			const d = describeError(e);
 			this.recordFailure(
@@ -918,7 +975,7 @@ class KernelSimulation implements Simulation {
 	private applyModuleEffects(
 		slot: ModuleSlot,
 		effects: readonly Effect[],
-		activationEvent: EventId,
+		parent: EventId | undefined,
 	): void {
 		slot.consecutiveFailures = 0;
 		this.clock.nextSeq();
@@ -932,18 +989,14 @@ class KernelSimulation implements Simulation {
 				runId: this.runId,
 				t,
 				seedPath: this.eventRng.path,
-				parent: activationEvent,
+				...(parent === undefined ? {} : { parent }),
 				provenance: "kernel",
 			},
 			{
 				kind: "module_step",
 				payload: {
 					module: slot.module.name,
-					summary: {
-						effects: stamped.length,
-						applied: report.applied,
-						rejected: report.rejected.length,
-					},
+					summary: moduleStepSummary(stamped, report),
 				},
 			},
 		);

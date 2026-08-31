@@ -85,6 +85,8 @@ export const toEntityId = (s: string): EntityId => s as EntityId;
 export const toEventId = (s: string): EventId => s as EventId;
 export const toRunId = (s: string): RunId => s as RunId;
 
+export const ZERO_EVENT_ID: EventId = toEventId("00000000000000000000000000");
+
 export const newEntityId = (rng: Rng): EntityId => toEntityId(ulid(rng));
 export const newEventId = (rng: Rng): EventId => toEventId(ulid(rng));
 export const makeRunId = (scenarioId: string, replicationId: number): RunId =>
