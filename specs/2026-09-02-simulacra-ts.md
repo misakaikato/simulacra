@@ -796,3 +796,5 @@ simulacra/
 - 预算只对真正发出的网络请求计数：replay 命中、断路后的即时失败、预算耗尽的拒绝都不消耗 `maxCalls`。
 - 断路器计数的是"最终失败"（含重试耗尽的 429/5xx/网络错误），措辞以此为准。
 - `llm_call` 事件的 `params` 记录实际使用的结构化模式（`json_schema` 或 `prompt`）。
+- `LLMResponse.structured?: "json_schema" | "prompt"` 记录实际模式，录制文件同样保存并回放；`SimulationDeps`/`RunOptions` 不再接受直传 `gateway`，只接受 `createGateway` 工厂。
+- replay 命中不进入 `ledger`，`cost` 只反映真实网络请求。
