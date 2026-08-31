@@ -778,3 +778,16 @@ simulacra/
 - 合并结果也要过 dtype 校验：`merge` 得到的值不能表示为目标 dtype（如 i32 溢出）时整条效果进入 rejected。
 - 绕过 `applyEffects` 的内部写入句柄不得从任何公共模块导出；只允许 `world.ts` 与 `resolver.ts` 之间私下共享（例如放在 `src/core/internal/` 且 `src/index.ts` 永不再导出）。
 - 内置插件注册函数（`registerBuiltinPolicies` 等）不得丢弃 `Result`：返回 `Result<void, DuplicatePlugin>` 或在重复时抛出。
+
+## 附录 B：A 阶段第 6 到 9 步裁定的细节
+
+- 校验、回退与动作解析统一在 `Simulation.step` 内线性执行（validate → fallback → `action.resolve`）；`FocalExecutor.act` 返回空数组，`Executor.act` 保留给批量执行体（Cohort）的向量化转移。
+- `core/` 不 import `llm/`：网关通过 `createSimulation`/`runScenario` 的 deps 或 `PluginContext.gateway` 注入；未注入时 llm 提供者与 summaryMemory 按 `scenario.llm` 自建。`tests/unit/layering.test.ts` 守护分层规则。
+- "整批失败"的定义为并集：提供者抛异常、返回长度或 agentId 错位、非空批次全部 err。连续 3 tick 整批失败则 run `failed`。
+- `Executor.observe` 第 6 个可选参数 `observations` 承载模块 `observe` 的输出，按模块返回对象的键合并（如 `feed`、`neighbors`）。
+- `buildPopulation` 固定声明 kernel 列 `agent.ordinal`（创建序号），保证 `agent` 表存在。
+- 组件 `reads` 支持 `persona.*` 通配，无匹配列时视为满足。
+- checkpoint 事件的 `path` 为相对 run 目录的 `checkpoints/<tick>`，保证不同输出目录的 digest 相同。
+- 结构化回退那一次 400 不计入重试次数。
+- 接口增项：`LLMSpec.sendSeed`（默认 true，`mlxLm` 预设为 false）；`ProviderFailure.excType?`；`rng.keyFromLabel(label)` 供插件按标签派生路径；检查点新增 `modules.json`；`Component.consolidate?()` 异步整理钩子（`preAct/postAct` 同步）；`LLMGateway.failures()` 与 `ledgerByPurpose()`；`PluginContext.gateway?`。
+- recentMemory 对 observation 条目只给占位摘要（payload 只有 sha），decision 条目含动作、参数与 rationale 前 200 字。
