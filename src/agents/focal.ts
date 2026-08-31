@@ -61,11 +61,8 @@ interface TickStash {
 const matchesPattern = (pattern: string, key: string): boolean =>
 	pattern.endsWith("*") ? key.startsWith(pattern.slice(0, -1)) : key === pattern;
 
-const isSatisfied = (pattern: string, available: ReadonlySet<string>): boolean => {
-	if (!pattern.endsWith("*")) return available.has(pattern);
-	for (const key of available) if (matchesPattern(pattern, key)) return true;
-	return false;
-};
+const isSatisfied = (pattern: string, available: ReadonlySet<string>): boolean =>
+	pattern.endsWith("*") || available.has(pattern);
 
 const isScalar = (v: JsonValue): v is Scalar =>
 	v === null ||

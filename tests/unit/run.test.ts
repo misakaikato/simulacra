@@ -1,0 +1,288 @@
+import { describe, expect, test } from "bun:test";
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { loadCheckpoint } from "../../src/core/checkpoint";
+import { FAILURE_TYPES } from "../../src/core/failures";
+import { eventLogPath, openSqliteEventLog } from "../../src/core/log";
+import {
+	CHECKPOINTS_DIR,
+	LOG_FILE,
+	RESULT_FILE,
+	runScenario,
+	withProviderOverride,
+	withTicksOverride,
+} from "../../src/core/run";
+import type { RunResult } from "../../src/core/types";
+import { createGateway } from "../../src/llm/gateway";
+import { kernelRegistry, kernelScenario } from "../helpers/kernel";
+
+process.env.NO_PROXY ??= "127.0.0.1,localhost";
+
+const tempDir = () => mkdtempSync(join(tmpdir(), "simulacra-run-"));
+
+const readResult = (dir: string): RunResult =>
+	JSON.parse(readFileSync(join(dir, RESULT_FILE), "utf8")) as RunResult;
+
+const readLog = (dir: string): readonly Record<string, unknown>[] =>
+	readFileSync(join(dir, LOG_FILE), "utf8")
+		.split("\n")
+		.filter((l) => l.length > 0)
+		.map((l) => JSON.parse(l) as Record<string, unknown>);
+
+describe("runScenario", () => {
+	test("writes result.json, log.jsonl, checkpoints and an events database", async () => {
+		const out = tempDir();
+		const fixture = kernelRegistry();
+		const scenario = kernelScenario({
+			steps: [{ kind: "run", ticks: 2 }, { kind: "checkpoint" }, { kind: "run", ticks: 1 }],
+		});
+		const r = await runScenario(scenario, fixture.registry, out, { logLevel: "debug" });
+		expect(r.ok).toBe(true);
+		if (!r.ok) return;
+		expect(r.value.status).toBe("succeeded");
+		expect(String(r.value.runId)).toBe("kernel:0");
+		expect(r.value.seed).toBe(21);
+		expect(r.value.metrics).toEqual({ scoreSum: 9 });
+		expect(r.value.distributions).toEqual({ scores: [3, 3, 3] });
+		expect(r.value.integrity.complete).toBe(true);
+		expect(r.value.integrity.activated).toBe(9);
+		expect(r.value.logPath).toBe(join(out, LOG_FILE));
+		expect(readResult(out)).toEqual(r.value);
+		expect(existsSync(join(out, CHECKPOINTS_DIR, "0"))).toBe(true);
+		expect(existsSync(join(out, CHECKPOINTS_DIR, "2"))).toBe(true);
+		const loaded = loadCheckpoint(join(out, CHECKPOINTS_DIR, "2"), r.value.scenarioHash);
+		expect(loaded.ok).toBe(true);
+		if (loaded.ok) expect(loaded.value.clock.now.tick).toBe(2);
+		const log = openSqliteEventLog(eventLogPath(out));
+		expect(log.query({ kind: ["checkpoint"] })).toHaveLength(2);
+		expect(log.query({ kind: ["activation"] })).toHaveLength(3);
+		log.close();
+		const lines = readLog(out);
+		expect(lines.length).toBeGreaterThan(0);
+		expect(lines.every((l) => l.runId === "kernel:0" || l.msg === "run finished")).toBe(true);
+		expect(lines.some((l) => l.msg === "tick complete" && l.tick === 2)).toBe(true);
+	});
+
+	test("two runs with the same seed produce the same digest", async () => {
+		const a = tempDir();
+		const b = tempDir();
+		await runScenario(kernelScenario(), kernelRegistry().registry, a);
+		await runScenario(kernelScenario(), kernelRegistry().registry, b);
+		const da = openSqliteEventLog(eventLogPath(a));
+		const db = openSqliteEventLog(eventLogPath(b));
+		expect(da.digest()).toBe(db.digest());
+		expect(da.count()).toBeGreaterThan(10);
+		da.close();
+		db.close();
+		expect(readResult(a).scenarioHash).toBe(readResult(b).scenarioHash);
+	});
+
+	test("refuses a non-empty output directory unless overwrite is set", async () => {
+		const out = tempDir();
+		writeFileSync(join(out, "leftover.txt"), "x");
+		const refused = await runScenario(kernelScenario(), kernelRegistry().registry, out);
+		expect(refused.ok).toBe(false);
+		if (!refused.ok) expect(refused.error.excType).toBe("OutputDirNotEmpty");
+		const allowed = await runScenario(kernelScenario(), kernelRegistry().registry, out, {
+			overwrite: true,
+		});
+		expect(allowed.ok).toBe(true);
+		expect(existsSync(join(out, "leftover.txt"))).toBe(false);
+		expect(existsSync(join(out, RESULT_FILE))).toBe(true);
+	});
+
+	test("ticksOverride and providerOverride reshape the scenario", async () => {
+		const base = kernelScenario({
+			steps: [{ kind: "run", ticks: 2 }, { kind: "checkpoint" }, { kind: "run", ticks: 4 }],
+		});
+		expect(withTicksOverride(base, 3).steps).toEqual([
+			{ kind: "run", ticks: 2 },
+			{ kind: "checkpoint" },
+			{ kind: "run", ticks: 1 },
+		]);
+		expect(withTicksOverride(base, 10).steps).toEqual([
+			{ kind: "run", ticks: 2 },
+			{ kind: "checkpoint" },
+			{ kind: "run", ticks: 8 },
+		]);
+		expect(withTicksOverride(base, 1).steps).toEqual([
+			{ kind: "run", ticks: 1 },
+			{ kind: "checkpoint" },
+		]);
+		expect(withTicksOverride(kernelScenario({ steps: [] }), 2).steps).toEqual([
+			{ kind: "run", ticks: 2 },
+		]);
+		expect(withProviderOverride(base, "mock").providers).toEqual({ main: { kind: "mock" } });
+
+		const out = tempDir();
+		const r = await runScenario(base, kernelRegistry().registry, out, {
+			ticksOverride: 4,
+			providerOverride: "mock",
+		});
+		expect(r.ok).toBe(true);
+		if (r.ok) {
+			expect(r.value.integrity.activated).toBe(12);
+			expect(r.value.status).toBe("succeeded");
+		}
+		const log = openSqliteEventLog(eventLogPath(out));
+		const decisions = log.query({ kind: ["decision"] });
+		expect(decisions.every((d) => d.kind === "decision" && d.payload.provider === "main")).toBe(
+			true,
+		);
+		expect(decisions.some((d) => d.kind === "decision" && d.payload.action === "noop")).toBe(
+			true,
+		);
+		log.close();
+	});
+
+	test("intervene and questionnaire steps write placeholder events and not_implemented failures", async () => {
+		const out = tempDir();
+		const scenario = kernelScenario({
+			steps: [
+				{ kind: "run", ticks: 1 },
+				{ kind: "intervene", arm: "treatment" },
+				{ kind: "questionnaire", name: "exit" },
+				{ kind: "run", ticks: 1 },
+			],
+		});
+		const r = await runScenario(scenario, kernelRegistry().registry, out);
+		expect(r.ok && r.value.status).toBe("succeeded");
+		const log = openSqliteEventLog(eventLogPath(out));
+		const intervention = log.query({ kind: ["intervention"] });
+		expect(intervention).toHaveLength(1);
+		if (intervention[0]?.kind === "intervention")
+			expect(intervention[0].payload).toEqual({
+				stepIndex: 1,
+				arm: "treatment",
+				targets: [],
+			});
+		const questionnaire = log
+			.query({ kind: ["measurement"] })
+			.filter((e) => e.kind === "measurement" && e.payload.instrument === "questionnaire");
+		expect(questionnaire).toHaveLength(1);
+		const failures = log.query({ kind: ["failure"] });
+		expect(
+			failures.filter(
+				(f) => f.kind === "failure" && f.payload.excType === FAILURE_TYPES.notImplemented,
+			),
+		).toHaveLength(2);
+		log.close();
+		const lines = readLog(out);
+		expect(lines.filter((l) => l.level === "error")).toHaveLength(2);
+	});
+
+	test("instantiate failures still produce a failed result.json", async () => {
+		const out = tempDir();
+		const r = await runScenario(
+			kernelScenario({ providers: { other: { kind: "scripted" } } }),
+			kernelRegistry().registry,
+			out,
+		);
+		expect(r.ok).toBe(true);
+		if (r.ok) {
+			expect(r.value.status).toBe("failed");
+			expect(r.value.failure?.stage).toBe("instantiate");
+			expect(r.value.integrity.complete).toBe(false);
+		}
+		expect(readResult(out).status).toBe("failed");
+		expect(readLog(out).some((l) => l.level === "error")).toBe(true);
+	});
+
+	test("llm provider end to end: record once, replay twice with identical digests and real cost", async () => {
+		let calls = 0;
+		const server = Bun.serve({
+			port: 0,
+			hostname: "127.0.0.1",
+			fetch: async () => {
+				calls += 1;
+				return Response.json({
+					model: "fake",
+					choices: [
+						{
+							message: {
+								content:
+									'{"action": "bump", "args": {"amount": 2}, "rationale": "keep score up"}',
+							},
+						},
+					],
+					usage: { prompt_tokens: 50, completion_tokens: 12 },
+				});
+			},
+		});
+		try {
+			const recordDir = tempDir();
+			const scenarioFor = (mode: "record" | "replay") =>
+				kernelScenario({
+					population: { n: 2 },
+					providers: { main: { kind: "llm" } },
+					llm: {
+						baseUrl: `http://127.0.0.1:${server.port}/v1`,
+						model: "fake",
+						mode,
+						recordDir,
+					},
+					steps: [{ kind: "run", ticks: 2 }],
+				});
+			const opts = {
+				createGateway: (
+					spec: Parameters<typeof createGateway>[0],
+					logger: Parameters<typeof createGateway>[1]["logger"],
+				) => createGateway(spec, { logger }),
+			};
+			const recorded = await runScenario(
+				scenarioFor("record"),
+				kernelRegistry().registry,
+				tempDir(),
+				opts,
+			);
+			expect(recorded.ok && recorded.value.status).toBe("succeeded");
+			if (!recorded.ok) return;
+			expect(calls).toBe(4);
+			expect(recorded.value.cost).toMatchObject({
+				llmCalls: 4,
+				promptTokens: 200,
+				completionTokens: 48,
+			});
+			expect(recorded.value.integrity).toMatchObject({
+				activated: 4,
+				ok: 4,
+				llmCalls: 4,
+				llmFailures: 0,
+			});
+			expect(recorded.value.metrics.scoreSum).toBe(8);
+
+			const a = tempDir();
+			const b = tempDir();
+			const ra = await runScenario(scenarioFor("replay"), kernelRegistry().registry, a, opts);
+			const rb = await runScenario(scenarioFor("replay"), kernelRegistry().registry, b, opts);
+			expect(calls).toBe(4);
+			expect(ra.ok && ra.value.status).toBe("succeeded");
+			expect(rb.ok && rb.value.integrity.llmCalls).toBe(4);
+			const la = openSqliteEventLog(eventLogPath(a));
+			const lb = openSqliteEventLog(eventLogPath(b));
+			expect(la.digest()).toBe(lb.digest());
+			const llmCalls = la.query({ kind: ["llm_call"] });
+			expect(llmCalls).toHaveLength(4);
+			expect(llmCalls.every((e) => e.kind === "llm_call" && e.payload.recorded)).toBe(true);
+			const decision = la.query({ kind: ["decision"] })[0];
+			if (decision?.kind === "decision") {
+				expect(decision.payload.action).toBe("bump");
+				expect(la.getContent(decision.payload.rationaleSha ?? "")).toBe("keep score up");
+				expect(la.chain(decision.eventId).map((e) => e.kind)).toEqual([
+					"observation",
+					"decision",
+				]);
+				expect(la.chain(decision.parent!).map((e) => e.kind)).toEqual([
+					"observation",
+					"llm_call",
+					"decision",
+				]);
+			}
+			la.close();
+			lb.close();
+		} finally {
+			server.stop(true);
+		}
+	});
+});

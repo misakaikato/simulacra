@@ -19,6 +19,7 @@ export const CHECKPOINT_FILES = {
 	clock: "clock.json",
 	executors: "executors.json",
 	providers: "providers.json",
+	modules: "modules.json",
 	rng: "rng.json",
 	meta: "meta.json",
 } as const;
@@ -28,6 +29,7 @@ export interface CheckpointInput {
 	readonly clock: { readonly now: LogicalTime };
 	readonly executors: JsonObject;
 	readonly providers: JsonObject;
+	readonly modules?: JsonObject;
 	readonly rngPaths: JsonValue;
 	readonly scenarioHash: string;
 	readonly digest: string;
@@ -39,6 +41,7 @@ export interface CheckpointState {
 	readonly clock: { readonly now: LogicalTime };
 	readonly executors: JsonObject;
 	readonly providers: JsonObject;
+	readonly modules: JsonObject;
 	readonly rngPaths: JsonValue;
 	readonly scenarioHash: string;
 	readonly digest: string;
@@ -69,6 +72,7 @@ export const saveCheckpoint = (
 		clock: { now },
 		executors: state.executors,
 		providers: state.providers,
+		modules: state.modules ?? {},
 		rng: state.rngPaths,
 		meta: {
 			version: 1,
@@ -138,6 +142,8 @@ export const loadCheckpoint = (
 	if (!executors.ok) return executors;
 	const providers = readJson(dir, CHECKPOINT_FILES.providers, JsonObjectSchema);
 	if (!providers.ok) return providers;
+	const modules = readJson(dir, CHECKPOINT_FILES.modules, JsonObjectSchema);
+	if (!modules.ok) return modules;
 	const rngPaths = readJson(dir, CHECKPOINT_FILES.rng, JsonValueSchema);
 	if (!rngPaths.ok) return rngPaths;
 	const worldSnapshot: WorldSnapshot = {
@@ -167,6 +173,7 @@ export const loadCheckpoint = (
 		clock: clock.value,
 		executors: executors.value,
 		providers: providers.value,
+		modules: modules.value,
 		rngPaths: rngPaths.value,
 		scenarioHash: meta.value.scenarioHash,
 		digest: meta.value.digest,

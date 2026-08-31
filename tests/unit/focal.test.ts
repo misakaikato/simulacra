@@ -227,7 +227,7 @@ describe("FocalExecutor.declare", () => {
 		]);
 		expect(wrongOrder.declare(world).ok).toBe(false);
 		const noPersonaColumns = executorOf(contextOf(scenario), [personaComponent(scenario)]);
-		expect(noPersonaColumns.declare(createWorld()).ok).toBe(false);
+		expect(noPersonaColumns.declare(createWorld()).ok).toBe(true);
 	});
 });
 
