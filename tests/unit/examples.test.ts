@@ -9,6 +9,7 @@ import { CHECKPOINTS_DIR, runScenario } from "../../src/core/run";
 import { overrideScenario, parseScenarioYaml } from "../../src/core/scenario";
 import type { EntityId, Event, Scenario } from "../../src/core/types";
 import { restoreWorld } from "../../src/core/world";
+import { ID_PLACEHOLDER } from "../../src/providers/mock";
 import { gatewayFactory } from "../helpers/kernel";
 import { builtinRegistry } from "../helpers/registry";
 
@@ -140,6 +141,46 @@ describe("echo_chamber example", () => {
 		expect(existsSync(join(a, CHECKPOINTS_DIR, "15"))).toBe(false);
 		expect(digestOf(a)).toBe(digestOf(b));
 		expect(ra.value.scenarioHash).toBe(rb.value.scenarioHash);
+	});
+
+	test("mock id arguments come from the observation, so only placeholder ids are rejected", async () => {
+		const out = tempDir();
+		const r = await runScenario(load("echo_chamber"), builtinRegistry(), out, {
+			providerOverride: "mock",
+			createGateway: gatewayFactory,
+		});
+		expect(r.ok && r.value.status).toBe("succeeded");
+		if (!r.ok) return;
+		const log = openSqliteEventLog(eventLogPath(out));
+		const rejected = log
+			.query({ kind: ["failure"] })
+			.filter((e) => e.kind === "failure" && e.payload.excType === "ActionRejected");
+		const decisionsWithIds = log
+			.query({ kind: ["decision"] })
+			.flatMap((e) => (e.kind === "decision" ? [e] : []))
+			.filter((e) => {
+				const args = e.payload.args;
+				return (
+					typeof args === "object" &&
+					args !== null &&
+					!Array.isArray(args) &&
+					("postId" in args || "target" in args)
+				);
+			});
+		log.close();
+		expect(decisionsWithIds.length).toBeGreaterThan(0);
+		const placeholders = decisionsWithIds.filter((e) => {
+			const args = e.payload.args as { postId?: string; target?: string };
+			return args.postId === ID_PLACEHOLDER || args.target === ID_PLACEHOLDER;
+		});
+		expect(placeholders.length).toBeLessThan(decisionsWithIds.length);
+		expect(r.value.integrity.rejectedActions).toBe(rejected.length);
+		expect(rejected.length).toBeLessThanOrEqual(placeholders.length);
+		expect(
+			rejected.every(
+				(e) => e.kind === "failure" && e.payload.message.includes(ID_PLACEHOLDER),
+			),
+		).toBe(true);
 	});
 
 	test("rejectedActions counts the ActionRejected failures", async () => {
