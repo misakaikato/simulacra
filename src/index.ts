@@ -14,9 +14,10 @@ import {
 } from "./core/run";
 import { err, ok } from "./core/result";
 import { digestRun, readRunScenario, runDirOfCheckpoint } from "./core/runDir";
-import { parseScenarioYaml, type ScenarioIssue } from "./core/scenario";
+import { parseScenarioYaml, resolveScenarioPlugins, type ScenarioIssue } from "./core/scenario";
 import type { GatewayFactory } from "./core/simulation";
-import type { FailureInfo, Result, RunResult, Scenario } from "./core/types";
+import type { AuditPlan, FailureInfo, Result, RunResult, Scenario } from "./core/types";
+import { parseAuditPlanYaml } from "./harness/plan";
 import { createGateway } from "./llm/gateway";
 import { loadPlugins, type PluginLoadError } from "./plugins";
 import { registerBuiltinMetrics } from "./metrics";
@@ -54,8 +55,17 @@ export type {
 	ActionCall,
 	Activation,
 	ActivationMode,
+	AuditPlan,
+	AuditReport,
 	ColumnDecl,
+	Condition,
+	ConditionFlag,
 	Cost,
+	DistributionTest,
+	Hypothesis,
+	Outcome,
+	PairwiseTest,
+	PerturbationAxis,
 	Decision,
 	DecisionRequest,
 	Effect,
@@ -107,7 +117,38 @@ export { parseOptions } from "./core/registry";
 export { andThen, collect, err, map, mapErr, ok, partition, unwrapOr } from "./core/result";
 export { keyFromLabel, rngFromSeed } from "./core/rng";
 export { AGENT_ENTITY, ORDINAL_COLUMN, PERSONA_PREFIX } from "./core/population";
-export { overrideScenario, parseScenario, scenarioHash, spawnReplications } from "./core/scenario";
+export {
+	overrideScenario,
+	parseScenario,
+	resolveScenarioPlugins,
+	scenarioHash,
+	spawnReplications,
+} from "./core/scenario";
+export type { AxisTemplate } from "./harness/axes";
+export {
+	AXIS_CATALOG,
+	DESIGN_AXES,
+	REPRESENTATION_AXES,
+	axisFromTemplate,
+	axisTemplate,
+} from "./harness/axes";
+export type { AuditPlanDocument, LoadScenario, ParsePlanOptions } from "./harness/plan";
+export {
+	AuditPlanDocumentSchema,
+	parseAuditPlan,
+	parseAuditPlanYaml,
+	planHash,
+} from "./harness/plan";
+export type { Assignment } from "./harness/conditions";
+export {
+	BASE_CONDITION_ID,
+	assignmentsOf,
+	baselineOf,
+	conditionIdOf,
+	generateConditions,
+	isBaseCondition,
+	modelsOf,
+} from "./harness/conditions";
 export { LOG_FILE, RESULT_FILE } from "./core/run";
 export { CHECKPOINTS_DIR, SCENARIO_FILE } from "./core/runDir";
 export { createRuleProvider, type RuleFn } from "./providers/rule";
@@ -138,18 +179,22 @@ export const createDefaultRegistry = (): Registry => {
 	return registry;
 };
 
-const withResolvedPlugins = (scenario: Scenario, baseDir: string): Scenario =>
-	scenario.plugins === undefined
-		? scenario
-		: { ...scenario, plugins: scenario.plugins.map((p) => resolve(baseDir, p)) };
-
 export const loadScenario = (pathOrText: string): Result<Scenario, readonly ScenarioIssue[]> => {
 	const isFile = existsSync(pathOrText) && statSync(pathOrText).isFile();
 	const parsed = parseScenarioYaml(isFile ? readFileSync(pathOrText, "utf8") : pathOrText);
 	if (!parsed.ok) return parsed;
 	return ok(
-		withResolvedPlugins(parsed.value, isFile ? dirname(resolve(pathOrText)) : process.cwd()),
+		resolveScenarioPlugins(parsed.value, isFile ? dirname(resolve(pathOrText)) : process.cwd()),
 	);
+};
+
+export const loadAuditPlan = (path: string): Result<AuditPlan, readonly ScenarioIssue[]> => {
+	if (!existsSync(path) || !statSync(path).isFile())
+		return err([{ code: "custom", path: [], message: `${path}: file not found`, input: path }]);
+	return parseAuditPlanYaml(readFileSync(path, "utf8"), {
+		baseDir: dirname(resolve(path)),
+		loadScenario,
+	});
 };
 
 interface PluginOptions {
