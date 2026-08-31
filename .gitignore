@@ -7,3 +7,4 @@ simulacra-data/
 *.sqlite-shm
 .env*
 .DS_Store
+.claude/worktrees/

@@ -5,3 +5,4 @@ simulacra-data/
 bun.lock
 specs/
 decisions/
+.claude/worktrees/
