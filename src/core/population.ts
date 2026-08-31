@@ -148,12 +148,14 @@ export const parseCsv = (text: string): readonly Readonly<Record<string, string>
 	});
 };
 
+type RawRecord = Readonly<Record<string, unknown>>;
+
+const isRawRecords = (v: unknown): v is readonly RawRecord[] =>
+	Array.isArray(v) && v.every((r) => typeof r === "object" && r !== null && !Array.isArray(r));
+
 const readSource = (
-	spec: PopulationSpec,
-	rng: Rng,
-): Result<readonly Readonly<Record<string, unknown>>[], PopulationError> => {
-	const source = spec.source;
-	if (source.kind === "synthetic") return synthesize(spec, rng);
+	source: Exclude<PopulationSpec["source"], { readonly kind: "synthetic" }>,
+): Result<readonly RawRecord[], PopulationError> => {
 	if (!isAbsolute(source.path))
 		return fail(`population source path must be absolute, got '${source.path}'`);
 	let text: string;
@@ -169,17 +171,15 @@ const readSource = (
 	} catch (e) {
 		return fail(`population source is not JSON: ${e instanceof Error ? e.message : String(e)}`);
 	}
-	if (!Array.isArray(parsed) || !parsed.every((r) => typeof r === "object" && r !== null))
-		return fail("population JSON must be an array of objects");
-	return ok(parsed as readonly Readonly<Record<string, unknown>>[]);
+	if (!isRawRecords(parsed)) return fail("population JSON must be an array of objects");
+	return ok(parsed);
 };
 
 const loadedRows = (
 	spec: PopulationSpec,
-	raw: readonly Readonly<Record<string, unknown>>[],
+	raw: readonly RawRecord[],
 	rng: Rng,
 ): Result<readonly Row[], PopulationError> => {
-	if (spec.source.kind === "synthetic") return ok(raw as readonly Row[]);
 	if (raw.length < spec.n)
 		return fail(`population source has ${raw.length} rows, population.n is ${spec.n}`);
 	const rows: Row[] = [];
@@ -196,6 +196,13 @@ const loadedRows = (
 		rows.push(row);
 	}
 	return ok(rows);
+};
+
+const sourceRows = (spec: PopulationSpec, rng: Rng): Result<readonly Row[], PopulationError> => {
+	if (spec.source.kind === "synthetic") return synthesize(spec, rng.fork(keyFromLabel("sample")));
+	const raw = readSource(spec.source);
+	if (!raw.ok) return raw;
+	return loadedRows(spec, raw.value, rng.fork(keyFromLabel("fill")));
 };
 
 const apportion = (n: number, weights: readonly number[]): readonly number[] => {
@@ -276,9 +283,7 @@ export const buildPopulation = (
 ): Result<readonly EntityId[], PopulationError | ColumnConflict> => {
 	const declared = declareColumns(spec, world);
 	if (!declared.ok) return declared;
-	const raw = readSource(spec, rng.fork(keyFromLabel("sample")));
-	if (!raw.ok) return raw;
-	const rows = loadedRows(spec, raw.value, rng.fork(keyFromLabel("fill")));
+	const rows = sourceRows(spec, rng);
 	if (!rows.ok) return rows;
 	const finalRows = stratified(spec, rows.value, rng);
 	if (!finalRows.ok) return finalRows;

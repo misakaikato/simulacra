@@ -1,10 +1,9 @@
 import { z } from "zod";
-import type { Component, LLMGateway, PluginContext, PluginError } from "../../core/protocols";
+import type { Component, PluginContext, PluginError } from "../../core/protocols";
 import { PERSONA_PREFIX } from "../../core/population";
 import { parseOptions } from "../../core/registry";
 import { err, ok } from "../../core/result";
 import type { PluginSpec, Result } from "../../core/types";
-import { createGateway } from "../../llm/gateway";
 import { feedObservation } from "./feedObservation";
 import { instructions } from "./instructions";
 import { neighborhoodObservation } from "./neighborhoodObservation";
@@ -37,15 +36,6 @@ const SummaryMemoryOptions = z.object({
 const FeedOptions = z.object({ size: z.number().int().positive().default(10) });
 const NeighborhoodOptions = z.object({ radius: z.number().int().positive().default(1) });
 
-const gatewayFor = (ctx: PluginContext): Result<LLMGateway, string> => {
-	if (ctx.gateway !== undefined) return ok(ctx.gateway);
-	try {
-		return ok(createGateway(ctx.scenario.llm, { logger: ctx.logger }));
-	} catch (e) {
-		return err(e instanceof Error ? e.message : String(e));
-	}
-};
-
 export const createComponent = (
 	spec: PluginSpec,
 	ctx: PluginContext,
@@ -76,14 +66,6 @@ export const createComponent = (
 		case "summaryMemory": {
 			const o = parseOptions(SLOT, spec, SummaryMemoryOptions);
 			if (!o.ok) return o;
-			const gateway = gatewayFor(ctx);
-			if (!gateway.ok)
-				return err({
-					reason: "construct_failed",
-					slot: SLOT,
-					kind: spec.kind,
-					message: gateway.error,
-				});
 			return ok(
 				summaryMemory(
 					{
@@ -92,7 +74,10 @@ export const createComponent = (
 							? {}
 							: { maxTokens: o.value.maxTokens }),
 					},
-					{ gateway: gateway.value, logger: ctx.logger },
+					{
+						...(ctx.gateway === undefined ? {} : { gateway: ctx.gateway }),
+						logger: ctx.logger,
+					},
 				),
 			);
 		}

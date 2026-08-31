@@ -14,8 +14,13 @@ import {
 	withTicksOverride,
 } from "../../src/core/run";
 import type { RunResult } from "../../src/core/types";
-import { createGateway } from "../../src/llm/gateway";
-import { kernelRegistry, kernelScenario } from "../helpers/kernel";
+import { gatewayFactory, kernelRegistry, kernelScenario } from "../helpers/kernel";
+import { z } from "zod";
+
+const structuredOf = (params: unknown): string | null | undefined => {
+	const parsed = z.object({ structured: z.string().nullable() }).safeParse(params);
+	return parsed.success ? parsed.data.structured : undefined;
+};
 
 process.env.NO_PROXY ??= "127.0.0.1,localhost";
 
@@ -37,7 +42,10 @@ describe("runScenario", () => {
 		const scenario = kernelScenario({
 			steps: [{ kind: "run", ticks: 2 }, { kind: "checkpoint" }, { kind: "run", ticks: 1 }],
 		});
-		const r = await runScenario(scenario, fixture.registry, out, { logLevel: "debug" });
+		const r = await runScenario(scenario, fixture.registry, out, {
+			logLevel: "debug",
+			createGateway: gatewayFactory,
+		});
 		expect(r.ok).toBe(true);
 		if (!r.ok) return;
 		expect(r.value.status).toBe("succeeded");
@@ -67,8 +75,9 @@ describe("runScenario", () => {
 	test("two runs with the same seed produce the same digest", async () => {
 		const a = tempDir();
 		const b = tempDir();
-		await runScenario(kernelScenario(), kernelRegistry().registry, a);
-		await runScenario(kernelScenario(), kernelRegistry().registry, b);
+		const opts = { createGateway: gatewayFactory };
+		await runScenario(kernelScenario(), kernelRegistry().registry, a, opts);
+		await runScenario(kernelScenario(), kernelRegistry().registry, b, opts);
 		const da = openSqliteEventLog(eventLogPath(a));
 		const db = openSqliteEventLog(eventLogPath(b));
 		expect(da.digest()).toBe(db.digest());
@@ -81,11 +90,14 @@ describe("runScenario", () => {
 	test("refuses a non-empty output directory unless overwrite is set", async () => {
 		const out = tempDir();
 		writeFileSync(join(out, "leftover.txt"), "x");
-		const refused = await runScenario(kernelScenario(), kernelRegistry().registry, out);
+		const refused = await runScenario(kernelScenario(), kernelRegistry().registry, out, {
+			createGateway: gatewayFactory,
+		});
 		expect(refused.ok).toBe(false);
 		if (!refused.ok) expect(refused.error.excType).toBe("OutputDirNotEmpty");
 		const allowed = await runScenario(kernelScenario(), kernelRegistry().registry, out, {
 			overwrite: true,
+			createGateway: gatewayFactory,
 		});
 		expect(allowed.ok).toBe(true);
 		expect(existsSync(join(out, "leftover.txt"))).toBe(false);
@@ -119,6 +131,7 @@ describe("runScenario", () => {
 		const r = await runScenario(base, kernelRegistry().registry, out, {
 			ticksOverride: 4,
 			providerOverride: "mock",
+			createGateway: gatewayFactory,
 		});
 		expect(r.ok).toBe(true);
 		if (r.ok) {
@@ -146,7 +159,9 @@ describe("runScenario", () => {
 				{ kind: "run", ticks: 1 },
 			],
 		});
-		const r = await runScenario(scenario, kernelRegistry().registry, out);
+		const r = await runScenario(scenario, kernelRegistry().registry, out, {
+			createGateway: gatewayFactory,
+		});
 		expect(r.ok && r.value.status).toBe("succeeded");
 		const log = openSqliteEventLog(eventLogPath(out));
 		const intervention = log.query({ kind: ["intervention"] });
@@ -178,6 +193,7 @@ describe("runScenario", () => {
 			kernelScenario({ providers: { other: { kind: "scripted" } } }),
 			kernelRegistry().registry,
 			out,
+			{ createGateway: gatewayFactory },
 		);
 		expect(r.ok).toBe(true);
 		if (r.ok) {
@@ -224,12 +240,7 @@ describe("runScenario", () => {
 					},
 					steps: [{ kind: "run", ticks: 2 }],
 				});
-			const opts = {
-				createGateway: (
-					spec: Parameters<typeof createGateway>[0],
-					logger: Parameters<typeof createGateway>[1]["logger"],
-				) => createGateway(spec, { logger }),
-			};
+			const opts = { createGateway: gatewayFactory };
 			const recorded = await runScenario(
 				scenarioFor("record"),
 				kernelRegistry().registry,
@@ -258,13 +269,25 @@ describe("runScenario", () => {
 			const rb = await runScenario(scenarioFor("replay"), kernelRegistry().registry, b, opts);
 			expect(calls).toBe(4);
 			expect(ra.ok && ra.value.status).toBe("succeeded");
-			expect(rb.ok && rb.value.integrity.llmCalls).toBe(4);
+			expect(rb.ok && rb.value.integrity).toMatchObject({
+				llmCalls: 0,
+				llmFailures: 0,
+				ok: 4,
+			});
+			expect(rb.ok && rb.value.cost.llmCalls).toBe(0);
+			expect(rb.ok && rb.value.metrics.scoreSum).toBe(8);
 			const la = openSqliteEventLog(eventLogPath(a));
 			const lb = openSqliteEventLog(eventLogPath(b));
 			expect(la.digest()).toBe(lb.digest());
 			const llmCalls = la.query({ kind: ["llm_call"] });
 			expect(llmCalls).toHaveLength(4);
 			expect(llmCalls.every((e) => e.kind === "llm_call" && e.payload.recorded)).toBe(true);
+			expect(
+				llmCalls.every(
+					(e) =>
+						e.kind === "llm_call" && structuredOf(e.payload.params) === "json_schema",
+				),
+			).toBe(true);
 			const decision = la.query({ kind: ["decision"] })[0];
 			if (decision?.kind === "decision") {
 				expect(decision.payload.action).toBe("bump");
@@ -281,6 +304,82 @@ describe("runScenario", () => {
 			}
 			la.close();
 			lb.close();
+		} finally {
+			server.stop(true);
+		}
+	});
+
+	test("gateway failures become llm-stage failure events counted in integrity", async () => {
+		const server = Bun.serve({
+			port: 0,
+			hostname: "127.0.0.1",
+			fetch: async (req) => {
+				const body = (await req.json()) as Record<string, unknown>;
+				if ("response_format" in body)
+					return new Response(JSON.stringify({ error: "json_schema unsupported" }), {
+						status: 400,
+					});
+				return Response.json({
+					model: "fake",
+					choices: [
+						{ message: { content: '{"action":"noop","args":{},"rationale":"r"}' } },
+					],
+					usage: { prompt_tokens: 5, completion_tokens: 2 },
+				});
+			},
+		});
+		try {
+			const out = tempDir();
+			const scenario = kernelScenario({
+				population: { n: 2 },
+				providers: { main: { kind: "llm" } },
+				llm: {
+					baseUrl: `http://127.0.0.1:${server.port}/v1`,
+					model: "fake",
+					structured: "auto",
+					budget: { maxCalls: 3, maxCompletionTokens: 64 },
+				},
+				steps: [{ kind: "run", ticks: 2 }],
+			});
+			const r = await runScenario(scenario, kernelRegistry().registry, out, {
+				createGateway: gatewayFactory,
+			});
+			expect(r.ok && r.value.status).toBe("succeeded");
+			if (!r.ok) return;
+			expect(r.value.cost.llmCalls).toBe(3);
+			expect(r.value.integrity).toMatchObject({
+				activated: 4,
+				ok: 3,
+				failed: 1,
+				llmCalls: 3,
+			});
+			expect(r.value.integrity.llmFailures).toBe(2);
+			const log = openSqliteEventLog(eventLogPath(out));
+			const llmStage = log
+				.query({ kind: ["failure"] })
+				.filter((e) => e.kind === "failure" && e.payload.stage === "llm");
+			const types = llmStage.map((e) => (e.kind === "failure" ? e.payload.excType : ""));
+			expect(types).toEqual([
+				FAILURE_TYPES.structuredFallback,
+				FAILURE_TYPES.budgetExhausted,
+			]);
+			expect(llmStage.every((e) => e.provenance === "llm")).toBe(true);
+			if (llmStage[0]?.kind === "failure") expect(llmStage[0].payload.retryable).toBe(true);
+			if (llmStage[1]?.kind === "failure") expect(llmStage[1].payload.retryable).toBe(false);
+			const modes = log
+				.query({ kind: ["llm_call"] })
+				.map((e) => (e.kind === "llm_call" ? structuredOf(e.payload.params) : undefined));
+			expect(modes).toEqual(["prompt", "prompt", "prompt"]);
+			log.close();
+			const lines = readLog(out);
+			expect(
+				lines.filter((l) => l.msg === "structured output fallback").map((l) => l.level),
+			).toEqual(["error"]);
+			expect(
+				lines.some(
+					(l) => l.level === "error" && JSON.stringify(l.data).includes('"stage":"llm"'),
+				),
+			).toBe(true);
 		} finally {
 			server.stop(true);
 		}

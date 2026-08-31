@@ -390,23 +390,27 @@ describe("registerBuiltinProviders", () => {
 		expect(registerBuiltinProviders(registry).ok).toBe(false);
 	});
 
-	test("llm provider builds its own gateway from the scenario when none is in context", () => {
+	test("llm provider without a gateway in context fails every request with gateway_missing", async () => {
 		const registry = registryWithActions();
 		registerBuiltinProviders(registry);
 		const ctx: PluginContext = { scenario: scenario({}), registry, logger: silentLogger };
-		expect(registry.providers.create({ kind: "llm" }, ctx).ok).toBe(true);
-		const replay = parseScenario({
-			scenarioId: "s",
-			seed: 1,
-			population: { n: 1 },
-			llm: { mode: "replay" },
-		});
-		if (!replay.ok) throw new Error("scenario");
-		const failed = registry.providers.create(
-			{ kind: "llm" },
-			{ scenario: replay.value, registry, logger: silentLogger },
+		const created = registry.providers.create({ kind: "llm" }, ctx);
+		expect(created.ok).toBe(true);
+		if (!created.ok) return;
+		const round = roundContext();
+		const results = await created.value.decide(
+			[withPrompt(request(agentA)), withPrompt(request(agentB))],
+			round,
 		);
-		expect(failed.ok).toBe(false);
-		if (!failed.ok) expect(failed.error.reason).toBe("construct_failed");
+		expect(results).toHaveLength(2);
+		for (const r of results) {
+			expect(r.ok).toBe(false);
+			if (!r.ok) {
+				expect(r.error.reason).toBe("gateway_missing");
+				expect(r.error.retryable).toBe(false);
+				expect(r.error.excType).toBe(FAILURE_TYPES.gatewayMissing);
+			}
+		}
+		expect(round.log.count()).toBe(0);
 	});
 });
