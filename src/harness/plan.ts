@@ -77,4 +77,7 @@ export const parseAuditPlanYaml = (
 	return parseAuditPlan(doc, opts);
 };
 
-export const planHash = (plan: AuditPlan): string => hashOf(plan);
+export const planHash = (plan: AuditPlan): string => {
+	const { concurrency: _concurrency, ...rest } = plan;
+	return hashOf(rest);
+};

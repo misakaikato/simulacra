@@ -18,6 +18,8 @@ import { parseScenarioYaml, resolveScenarioPlugins, type ScenarioIssue } from ".
 import type { GatewayFactory } from "./core/simulation";
 import type { AuditPlan, FailureInfo, Result, RunResult, Scenario } from "./core/types";
 import { parseAuditPlanYaml } from "./harness/plan";
+import { failedRunResult } from "./harness/runner";
+import type { RunFn } from "./core/protocols";
 import { createGateway } from "./llm/gateway";
 import { loadPlugins, type PluginLoadError } from "./plugins";
 import { registerBuiltinMetrics } from "./metrics";
@@ -55,8 +57,11 @@ export type {
 	ActionCall,
 	Activation,
 	ActivationMode,
+	AuditOptionsSummary,
 	AuditPlan,
+	AuditPlanSummary,
 	AuditReport,
+	AuditRunRef,
 	ColumnDecl,
 	Condition,
 	ConditionFlag,
@@ -94,8 +99,8 @@ export type {
 export type { InspectQuery, InspectResult } from "./core/inspect";
 export type { ReplayResult } from "./core/replay";
 export type { ScenarioIssue } from "./core/scenario";
-export type { LogLevel, LogSink } from "./logging/logger";
-export { isLogLevel } from "./logging/logger";
+export type { Logger, LogLevel, LogRecord, LogSink } from "./logging/logger";
+export { createLogger, isLogLevel, levelFromEnv, silentLogger } from "./logging/logger";
 export type { PluginLoadError } from "./plugins";
 export { loadPlugins } from "./plugins";
 export type { DoctorCheck, DoctorOptions } from "./doctor";
@@ -158,7 +163,24 @@ export { registerBuiltinMetrics } from "./metrics";
 export { registerBuiltinProviders } from "./providers";
 export { registerBuiltinPolicies } from "./policies";
 export { registerBuiltinExecutors } from "./agents";
-export { prettySink } from "./logging/sinks";
+export { jsonlSink, prettySink } from "./logging/sinks";
+export type { AuditError, AuditOptions, AuditRun, AnalyzeOptions } from "./harness/runner";
+export {
+	AUDIT_FILE,
+	DEFAULT_BOOTSTRAP_ITERS,
+	PLAN_FILE,
+	REPORT_FILE,
+	RUNS_DIR,
+	analyze,
+	audit,
+	conditionDirName,
+	effectivePlan,
+	failedRunResult,
+	readAuditReport,
+	runPool,
+} from "./harness/runner";
+export { escapeHtml, formatNumber, renderReportHtml } from "./harness/report";
+export * as stats from "./harness/stats";
 
 export const version: string = pkg.version;
 
@@ -250,6 +272,16 @@ export const resume = async (
 	if (!registry.ok) return registry;
 	return coreResumeRun(checkpointDir, ticks, registry.value, outDir, withGateway(opts));
 };
+
+export type KernelRunOptions = Omit<RunOptions, "overwrite" | "ticksOverride">;
+
+export const kernelRunFn =
+	(opts: KernelRunOptions = {}): RunFn =>
+	async (scenario, seed, outDir) => {
+		const effective = { ...scenario, seed };
+		const r = await runScenario(effective, outDir, { ...opts, overwrite: true });
+		return r.ok ? r.value : failedRunResult(effective, outDir, r.error);
+	};
 
 export const replay = (runDir: string, toTick?: number): Result<ReplayResult, string> =>
 	replayRun(runDir, toTick);

@@ -441,11 +441,37 @@ export interface DistributionTest {
 	readonly w1: number;
 	readonly cliffDelta: number;
 	readonly tvd?: number;
+	readonly tvdBase?: number;
+}
+
+export interface AuditPlanSummary {
+	readonly scenarioId: string;
+	readonly design: AuditPlan["design"];
+	readonly replications: number;
+	readonly models: readonly string[];
+	readonly metrics: readonly string[];
+	readonly claimType: AuditPlan["claimType"];
+	readonly axes: readonly PerturbationAxis[];
+}
+
+export interface AuditRunRef {
+	readonly conditionId: string;
+	readonly replicationId: number;
+	readonly dir: string;
+}
+
+export interface AuditOptionsSummary {
+	readonly includeIncomplete: boolean;
+	readonly bootstrapIters: number;
+	readonly providerOverride?: string;
 }
 
 export interface AuditReport {
 	readonly planHash: string;
+	readonly plan: AuditPlanSummary;
+	readonly options: AuditOptionsSummary;
 	readonly conditions: readonly Condition[];
+	readonly runIndex: readonly AuditRunRef[];
 	readonly runs: readonly RunResult[];
 	readonly pairwise: readonly PairwiseTest[];
 	readonly directionConsistency: Readonly<Record<string, number>>;

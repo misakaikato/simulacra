@@ -181,6 +181,9 @@ metrics: [m]
 		expect(planHash({ ...a.value, replications: a.value.replications + 1 })).not.toBe(
 			planHash(a.value),
 		);
+		expect(planHash({ ...a.value, concurrency: a.value.concurrency + 3 })).toBe(
+			planHash(a.value),
+		);
 		expect(loadAuditPlan(join(dir, "nope.yaml")).ok).toBe(false);
 	});
 });
