@@ -106,6 +106,40 @@ describe("replayRun", () => {
 		const at0 = replayRun(dir, 0);
 		expect(at0.ok && at0.value.worldHash).toBe(worldHashAt(dir, 0));
 		expect(at0.ok && at0.value.folded).toBe(0);
+		expect(at0.ok && at0.value.fromTick).toBe(0);
+		const beyond = replayRun(dir, 99);
+		expect(beyond.ok && beyond.value.tick).toBe(6);
+		expect(beyond.ok && beyond.value.worldHash).toBe(worldHashAt(dir, 6));
+		const negative = replayRun(dir, -1);
+		expect(negative.ok).toBe(false);
+		if (!negative.ok) expect(negative.error).toContain("non-negative");
+	});
+
+	test("starts from the earliest checkpoint not later than the target, so resumed runs replay too", async () => {
+		const direct = tempDir();
+		await runScenario(scenarioOf(), builtinRegistry(), direct, opts);
+		const resumed = tempDir();
+		const rr = await resumeRun(
+			join(direct, CHECKPOINTS_DIR, "3"),
+			3,
+			builtinRegistry(),
+			resumed,
+			opts,
+		);
+		expect(rr.ok && rr.value.status).toBe("succeeded");
+		expect(existsSync(join(resumed, CHECKPOINTS_DIR, "0"))).toBe(false);
+		const at6 = replayRun(resumed, 6);
+		expect(at6.ok).toBe(true);
+		if (at6.ok) {
+			expect(at6.value.worldHash).toBe(worldHashAt(direct, 6));
+			expect(at6.value.fromTick).toBe(3);
+			expect(at6.value.tick).toBe(6);
+		}
+		const all = replayRun(resumed);
+		expect(all.ok && all.value.worldHash).toBe(worldHashAt(direct, 6));
+		const tooEarly = replayRun(resumed, 2);
+		expect(tooEarly.ok).toBe(false);
+		if (!tooEarly.ok) expect(tooEarly.error).toContain("no checkpoint at or before tick 2");
 	});
 
 	test("fails typed on a directory without a run", () => {

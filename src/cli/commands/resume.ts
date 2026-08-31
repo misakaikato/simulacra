@@ -1,15 +1,7 @@
 import { defineCommand } from "citty";
-import { createDefaultRegistry, digest, resume } from "../../index";
+import { digest, resume } from "../../index";
 import { summarize } from "./run";
-import {
-	describeFailure,
-	fail,
-	loadPlugins,
-	logLevelArg,
-	pluginPathsOf,
-	positiveArg,
-	print,
-} from "./shared";
+import { describeFailure, fail, logLevelArg, pluginPathsOf, positiveArg, print } from "./shared";
 
 export const resumeCommand = defineCommand({
 	meta: { name: "resume", description: "Continue a run from a checkpoint directory" },
@@ -29,12 +21,11 @@ export const resumeCommand = defineCommand({
 	run: async ({ args, rawArgs }) => {
 		const ticks = positiveArg("ticks", args.ticks);
 		if (ticks === undefined) return fail("--ticks is required");
-		const registry = createDefaultRegistry();
-		await loadPlugins(registry, pluginPathsOf(rawArgs));
+		const plugins = pluginPathsOf(rawArgs);
 		const every = positiveArg("checkpoint-every", args["checkpoint-every"]);
 		const logLevel = logLevelArg(args["log-level"]);
 		const result = await resume(args.checkpointDir, ticks, args.out, {
-			registry,
+			plugins,
 			overwrite: args.overwrite === true,
 			...(every === undefined ? {} : { checkpointEvery: every }),
 			...(logLevel === undefined ? {} : { logLevel }),

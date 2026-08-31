@@ -1,5 +1,5 @@
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
 import { eventLogPath, openSqliteEventLog } from "./log";
 import type { EventLog } from "./protocols";
 import { err, ok } from "./result";
@@ -11,6 +11,18 @@ export const CHECKPOINTS_DIR = "checkpoints";
 
 export const checkpointDirOf = (runDir: string, tick: number): string =>
 	join(runDir, CHECKPOINTS_DIR, String(tick));
+
+export const runDirOfCheckpoint = (checkpointDir: string): string =>
+	dirname(dirname(resolve(checkpointDir)));
+
+export const checkpointTicks = (runDir: string): readonly number[] => {
+	const dir = join(runDir, CHECKPOINTS_DIR);
+	if (!existsSync(dir)) return [];
+	return readdirSync(dir, { withFileTypes: true })
+		.filter((e) => e.isDirectory() && /^\d+$/.test(e.name))
+		.map((e) => Number(e.name))
+		.sort((a, b) => a - b);
+};
 
 export const writeRunScenario = (runDir: string, scenario: Scenario): void => {
 	writeFileSync(join(runDir, SCENARIO_FILE), JSON.stringify(scenario, null, "\t"));

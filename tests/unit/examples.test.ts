@@ -142,6 +142,30 @@ describe("echo_chamber example", () => {
 		expect(ra.value.scenarioHash).toBe(rb.value.scenarioHash);
 	});
 
+	test("rejectedActions counts the ActionRejected failures", async () => {
+		const out = tempDir();
+		const r = await runScenario(load("echo_chamber"), builtinRegistry(), out, {
+			providerOverride: "mock",
+			ticksOverride: 3,
+			createGateway: gatewayFactory,
+		});
+		expect(r.ok && r.value.status).toBe("succeeded");
+		if (!r.ok) return;
+		const log = openSqliteEventLog(eventLogPath(out));
+		const rejected = log
+			.query({ kind: ["failure"] })
+			.filter((e) => e.kind === "failure" && e.payload.excType === "ActionRejected").length;
+		log.close();
+		expect(r.value.integrity.rejectedActions).toBeGreaterThan(0);
+		expect(r.value.integrity.rejectedActions).toBe(rejected);
+		expect(r.value.integrity.complete).toBe(true);
+		expect(r.value.integrity.failed).toBe(0);
+		const written = JSON.parse(readFileSync(join(out, "result.json"), "utf8")) as {
+			integrity: { rejectedActions: number };
+		};
+		expect(written.integrity.rejectedActions).toBe(rejected);
+	});
+
 	test("params drive the module options through $param refs", async () => {
 		const high = overrideScenario(load("echo_chamber"), "params.homophily", "high");
 		expect(high.ok).toBe(true);

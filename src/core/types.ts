@@ -93,6 +93,7 @@ export interface Integrity {
 	readonly llmCalls: number;
 	readonly llmFailures: number;
 	readonly droppedEffects: number;
+	readonly rejectedActions: number;
 	readonly complete: boolean;
 }
 
