@@ -1,6 +1,7 @@
 import { join, resolve } from "node:path";
 import type { Logger } from "../logging/logger";
-import type { CheckpointInput } from "./checkpoint";
+import { z } from "zod";
+import type { CheckpointInput, CheckpointState } from "./checkpoint";
 import { createClock } from "./clock";
 import { makeEvent, type EventInit } from "./events";
 import { FAILURE_TYPES, PARSE_FAILURE_TYPES } from "./failures";
@@ -87,7 +88,25 @@ export interface SimulationDeps {
 	readonly createGateway: GatewayFactory;
 	readonly log?: EventLog;
 	readonly baseDir?: string;
+	readonly resumeFrom?: CheckpointState;
 }
+
+export interface ResumePoint {
+	readonly now: LogicalTime;
+	readonly lastEventId: EventId;
+	readonly boundaryEvents: number;
+}
+
+const RngPathsSchema = z.object({ boundaryEvents: z.number().int().nonnegative().default(0) });
+
+export const resumePointOf = (checkpoint: CheckpointState): ResumePoint => {
+	const parsed = RngPathsSchema.safeParse(checkpoint.rngPaths);
+	return {
+		now: checkpoint.clock.now,
+		lastEventId: checkpoint.lastEventId,
+		boundaryEvents: parsed.success ? parsed.data.boundaryEvents : 0,
+	};
+};
 
 export interface TickReport {
 	readonly tick: number;
@@ -205,6 +224,7 @@ class KernelSimulation implements Simulation {
 	private eventRng: Rng;
 	private lastEventId: EventId = ZERO_EVENT_ID;
 	private initialized = false;
+	private boundaryEvents = 0;
 	private incomplete = false;
 	private gatewayFailures = 0;
 	private counts = { activated: 0, ok: 0, failed: 0, parseFailures: 0, droppedEffects: 0 };
@@ -224,6 +244,7 @@ class KernelSimulation implements Simulation {
 		readonly providers: ReadonlyMap<string, DecisionProvider>;
 		readonly policy: ActivationPolicy;
 		readonly instruments: readonly Instrument[];
+		readonly resume?: ResumePoint;
 	}) {
 		this.runId = parts.runId;
 		this.scenario = parts.scenario;
@@ -246,14 +267,19 @@ class KernelSimulation implements Simulation {
 		this.providers = parts.providers;
 		this.policy = parts.policy;
 		this.instruments = parts.instruments;
-		this.clock = createClock();
+		this.clock = createClock(parts.resume?.now);
+		if (parts.resume !== undefined) {
+			this.lastEventId = parts.resume.lastEventId;
+			this.initialized = true;
+			for (let i = 0; i < parts.resume.boundaryEvents; i += 1) this.nextEventId();
+		}
 	}
 
 	emit(init: EventInit, fields: EventFields = {}): Event {
 		this.clock.nextSeq();
 		const event = makeEvent(
 			{
-				eventId: newEventId(this.eventRng),
+				eventId: this.nextEventId(),
 				runId: this.runId,
 				t: this.clock.now,
 				seedPath: this.eventRng.path,
@@ -319,7 +345,11 @@ class KernelSimulation implements Simulation {
 			executors,
 			providers,
 			modules,
-			rngPaths: { root: [...this.rootRng.path], tick: this.clock.now.tick },
+			rngPaths: {
+				root: [...this.rootRng.path],
+				tick: this.clock.now.tick,
+				boundaryEvents: this.boundaryEvents,
+			},
 			scenarioHash: this.scenarioHash,
 			digest: this.log.digest(),
 			lastEventId: this.lastEventId,
@@ -361,7 +391,7 @@ class KernelSimulation implements Simulation {
 					),
 				);
 			}
-			this.applyModuleEffects(slot, effects, undefined);
+			this.applyModuleEffects(slot, effects, undefined, false);
 		}
 		return ok(undefined);
 	}
@@ -908,6 +938,11 @@ class KernelSimulation implements Simulation {
 		}
 	}
 
+	private nextEventId(): EventId {
+		if (this.eventRng === this.boundaryRng) this.boundaryEvents += 1;
+		return newEventId(this.eventRng);
+	}
+
 	private resolveContext(tickRng: Rng, label: string): ResolveContext {
 		const rng = tickRng.fork(keyFromLabel(label));
 		return {
@@ -982,10 +1017,11 @@ class KernelSimulation implements Simulation {
 		slot: ModuleSlot,
 		effects: readonly Effect[],
 		parent: EventId | undefined,
+		advanceSeq = true,
 	): void {
 		slot.consecutiveFailures = 0;
-		this.clock.nextSeq();
-		const moduleEvent = newEventId(this.eventRng);
+		if (advanceSeq) this.clock.nextSeq();
+		const moduleEvent = this.nextEventId();
 		const t = this.clock.now;
 		const stamped = effects.map((e) => ({ ...e, cause: moduleEvent }));
 		const report = applyEffects(this.world, stamped, t);
@@ -1132,7 +1168,8 @@ export const createSimulation = (
 	const resolved = resolveScenarioParams(resolvedScenario(scenario, deps));
 	if (!resolved.ok) return instantiateError("ParamResolve", describeParamError(resolved.error));
 	const effective = resolved.value;
-	const world = createWorld();
+	const resumeFrom = deps.resumeFrom;
+	const world = resumeFrom?.world ?? createWorld();
 	const rootRng = rngFromSeed(effective.seed, effective.seedPath);
 	const failureSink: { handle: (failure: LLMFailure) => void } = { handle: () => {} };
 	let gateway: LLMGateway;
@@ -1183,12 +1220,15 @@ export const createSimulation = (
 			);
 	}
 
-	const population = buildPopulation(
-		effective.population,
-		world,
-		rootRng.fork(keyFromLabel("population")),
-	);
-	if (!population.ok) return instantiateError(population.error.kind, population.error.message);
+	if (resumeFrom === undefined) {
+		const population = buildPopulation(
+			effective.population,
+			world,
+			rootRng.fork(keyFromLabel("population")),
+		);
+		if (!population.ok)
+			return instantiateError(population.error.kind, population.error.message);
+	}
 
 	const providers = new Map<string, DecisionProvider>();
 	const executors: ExecutorSlot[] = [];
@@ -1253,6 +1293,21 @@ export const createSimulation = (
 		});
 	}
 
+	if (resumeFrom !== undefined) {
+		for (const [name, module] of modules) {
+			const state = resumeFrom.modules[name];
+			if (state !== undefined) module.setState(state);
+		}
+		for (const slot of executors) {
+			const state = resumeFrom.executors[slot.executor.name];
+			if (state !== undefined) slot.executor.setState(state);
+		}
+		for (const [name, provider] of providers) {
+			const state = resumeFrom.providers[name];
+			if (state !== undefined) provider.setState(state);
+		}
+	}
+
 	logger.info("simulation assembled", {
 		agents: world.count(AGENT_ENTITY),
 		modules: [...modules.keys()],
@@ -1276,6 +1331,7 @@ export const createSimulation = (
 		providers,
 		policy: policy.value,
 		instruments,
+		...(resumeFrom === undefined ? {} : { resume: resumePointOf(resumeFrom) }),
 	});
 	failureSink.handle = (failure) => simulation.recordGatewayFailure(failure);
 	return ok(simulation);

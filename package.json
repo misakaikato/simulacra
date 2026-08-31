@@ -30,10 +30,12 @@
 		"format": "prettier --write .",
 		"format:check": "prettier --check .",
 		"test": "bun test",
+		"simulacra": "bun src/cli/index.ts",
 		"build:gui": "vite build --config gui/vite.config.ts",
 		"dev:gui": "vite --config gui/vite.config.ts"
 	},
 	"dependencies": {
+		"citty": "0.2.2",
 		"yaml": "^2.9.0",
 		"zod": "^4.5.4"
 	},
