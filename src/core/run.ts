@@ -1,5 +1,5 @@
 import { existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { join } from "node:path";
 import {
 	createLogger,
 	levelFromEnv,
@@ -13,7 +13,13 @@ import { FAILURE_TYPES } from "./failures";
 import { ZERO_EVENT_ID, makeRunId } from "./ids";
 import type { EventLog, Registry } from "./protocols";
 import { err, ok } from "./result";
-import { CHECKPOINTS_DIR, openRunLog, readRunScenario, writeRunScenario } from "./runDir";
+import {
+	CHECKPOINTS_DIR,
+	openRunLog,
+	readRunScenario,
+	runDirOfCheckpoint,
+	writeRunScenario,
+} from "./runDir";
 import { scenarioHash } from "./scenario";
 import {
 	IncompleteTick,
@@ -288,6 +294,7 @@ const drive = async (
 				llmCalls: 0,
 				llmFailures: 0,
 				droppedEffects: 0,
+				rejectedActions: 0,
 				complete: false,
 			},
 			cost: { llmCalls: 0, promptTokens: 0, completionTokens: 0, cachedTokens: 0, wallMs: 0 },
@@ -371,7 +378,7 @@ export const resumeRun = async (
 	outDir: string,
 	opts: ResumeOptions,
 ): Promise<Result<RunResult, FailureInfo>> => {
-	const runDir = dirname(dirname(resolve(checkpointDir)));
+	const runDir = runDirOfCheckpoint(checkpointDir);
 	const scenario = readRunScenario(runDir);
 	if (!scenario.ok) return err(instantiateFailure("RunDirUnreadable", scenario.error));
 	const checkpoint = loadCheckpoint(checkpointDir, scenarioHash(scenario.value));

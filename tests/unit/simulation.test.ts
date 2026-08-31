@@ -136,6 +136,7 @@ describe("Simulation.step", () => {
 			llmCalls: 0,
 			llmFailures: 0,
 			droppedEffects: 0,
+			rejectedActions: 0,
 			complete: true,
 		});
 		const decision = sim.log.query({ kind: ["decision"], tick: 1 })[0];

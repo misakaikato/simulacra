@@ -1,17 +1,10 @@
 import { existsSync } from "node:fs";
 import { defineCommand } from "citty";
-import {
-	createDefaultRegistry,
-	digest,
-	loadScenario,
-	runScenario,
-	type RunResult,
-} from "../../index";
+import { digest, loadScenario, runScenario, type RunResult } from "../../index";
 import {
 	describeFailure,
 	fail,
 	integerArg,
-	loadPlugins,
 	logLevelArg,
 	pluginPathsOf,
 	positiveArg,
@@ -27,7 +20,7 @@ export const summarize = (result: RunResult, outDir: string): readonly string[] 
 	return [
 		`run ${result.runId} ${result.status}`,
 		`out: ${outDir}`,
-		`integrity: activated=${i.activated} ok=${i.ok} failed=${i.failed} parseFailures=${i.parseFailures} llmFailures=${i.llmFailures} droppedEffects=${i.droppedEffects} complete=${i.complete}`,
+		`integrity: activated=${i.activated} ok=${i.ok} failed=${i.failed} parseFailures=${i.parseFailures} llmFailures=${i.llmFailures} droppedEffects=${i.droppedEffects} rejectedActions=${i.rejectedActions} complete=${i.complete}`,
 		`cost: llmCalls=${c.llmCalls} promptTokens=${c.promptTokens} completionTokens=${c.completionTokens} cachedTokens=${c.cachedTokens}`,
 		`metrics: ${metrics.length === 0 ? "none" : metrics}`,
 	];
@@ -63,13 +56,12 @@ export const runCommand = defineCommand({
 			);
 		const seed = integerArg("seed", args.seed);
 		const scenario = seed === undefined ? loaded.value : { ...loaded.value, seed };
-		const registry = createDefaultRegistry();
-		await loadPlugins(registry, pluginPathsOf(rawArgs));
+		const plugins = pluginPathsOf(rawArgs);
 		const ticks = positiveArg("ticks", args.ticks);
 		const every = positiveArg("checkpoint-every", args["checkpoint-every"]);
 		const logLevel = logLevelArg(args["log-level"]);
 		const result = await runScenario(scenario, args.out, {
-			registry,
+			plugins,
 			overwrite: args.overwrite === true,
 			...(ticks === undefined ? {} : { ticksOverride: ticks }),
 			...(args.provider === undefined ? {} : { providerOverride: args.provider }),

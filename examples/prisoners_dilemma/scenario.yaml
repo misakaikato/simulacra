@@ -1,5 +1,6 @@
 scenarioId: prisoners_dilemma
 seed: 1
+plugins: ["./rules.ts"]
 params:
     opponent: titForTat
     framing: canonical

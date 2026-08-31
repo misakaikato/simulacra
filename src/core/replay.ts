@@ -1,15 +1,16 @@
 import { loadCheckpoint } from "./checkpoint";
 import { ZERO_EVENT_ID } from "./ids";
-import type { EventLog } from "./protocols";
+import type { EventLog, World } from "./protocols";
 import { applyEffects } from "./resolver";
 import { err, ok } from "./result";
-import { checkpointDirOf, readRunScenario, withRunLog } from "./runDir";
+import { checkpointDirOf, checkpointTicks, readRunScenario, withRunLog } from "./runDir";
 import { scenarioHash } from "./scenario";
-import type { Effect, Event, JsonValue, Result } from "./types";
+import type { Effect, Event, EventId, JsonValue, Result } from "./types";
 
 export interface ReplayResult {
 	readonly worldHash: string;
 	readonly tick: number;
+	readonly fromTick: number;
 	readonly folded: number;
 }
 
@@ -38,13 +39,14 @@ export const recordedEffects = (e: Event): readonly Effect[] => {
 
 export const replayEvents = (
 	log: EventLog,
-	world: Parameters<typeof applyEffects>[0],
-	afterEventId: Event["eventId"],
+	world: World,
+	afterEventId: EventId,
+	fromTick: number,
 	toTick: number | undefined,
 ): ReplayResult => {
 	let past = afterEventId === ZERO_EVENT_ID;
 	let folded = 0;
-	let lastTick = -1;
+	let reached = fromTick;
 	for (const e of log.query({})) {
 		if (!past) {
 			if (e.eventId === afterEventId) past = true;
@@ -55,17 +57,31 @@ export const replayEvents = (
 		if (effects.length === 0) continue;
 		applyEffects(world, effects, e.t);
 		folded += effects.length;
-		lastTick = e.t.tick;
+		reached = Math.max(reached, e.t.tick + 1);
 	}
-	return { worldHash: world.hash(), tick: toTick ?? lastTick + 1, folded };
+	return {
+		worldHash: world.hash(),
+		tick: toTick === undefined ? reached : Math.min(toTick, reached),
+		fromTick,
+		folded,
+	};
 };
 
 export const replayRun = (runDir: string, toTick?: number): Result<ReplayResult, string> => {
+	if (toTick !== undefined && (!Number.isInteger(toTick) || toTick < 0))
+		return err(`toTick must be a non-negative integer, got ${toTick}`);
 	const scenario = readRunScenario(runDir);
 	if (!scenario.ok) return scenario;
-	const checkpoint = loadCheckpoint(checkpointDirOf(runDir, 0), scenarioHash(scenario.value));
-	if (!checkpoint.ok) return err(`tick 0 checkpoint: ${checkpoint.error.message}`);
+	const [start] = checkpointTicks(runDir).filter((t) => toTick === undefined || t <= toTick);
+	if (start === undefined)
+		return err(
+			toTick === undefined
+				? `${runDir} has no checkpoints`
+				: `${runDir} has no checkpoint at or before tick ${toTick}`,
+		);
+	const checkpoint = loadCheckpoint(checkpointDirOf(runDir, start), scenarioHash(scenario.value));
+	if (!checkpoint.ok) return err(`tick ${start} checkpoint: ${checkpoint.error.message}`);
 	return withRunLog(runDir, (log) =>
-		ok(replayEvents(log, checkpoint.value.world, checkpoint.value.lastEventId, toTick)),
+		ok(replayEvents(log, checkpoint.value.world, checkpoint.value.lastEventId, start, toTick)),
 	);
 };

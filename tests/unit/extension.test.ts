@@ -198,6 +198,7 @@ describe("extension without touching src/core", () => {
 			llmCalls: 0,
 			llmFailures: 0,
 			droppedEffects: 0,
+			rejectedActions: 0,
 			complete: true,
 		});
 		expect(result.value.metrics.moodTotal).toBe(18);

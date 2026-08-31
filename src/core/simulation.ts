@@ -1,6 +1,7 @@
 import { join, resolve } from "node:path";
 import type { Logger } from "../logging/logger";
 import { z } from "zod";
+import { ActionRejected } from "./actions";
 import type { CheckpointInput, CheckpointState } from "./checkpoint";
 import { createClock } from "./clock";
 import { makeEvent, type EventInit } from "./events";
@@ -227,7 +228,14 @@ class KernelSimulation implements Simulation {
 	private boundaryEvents = 0;
 	private incomplete = false;
 	private gatewayFailures = 0;
-	private counts = { activated: 0, ok: 0, failed: 0, parseFailures: 0, droppedEffects: 0 };
+	private counts = {
+		activated: 0,
+		ok: 0,
+		failed: 0,
+		parseFailures: 0,
+		droppedEffects: 0,
+		rejectedActions: 0,
+	};
 
 	constructor(parts: {
 		readonly runId: RunId;
@@ -304,6 +312,7 @@ class KernelSimulation implements Simulation {
 			llmCalls: this.gateway.ledger().llmCalls,
 			llmFailures: this.gatewayFailures,
 			droppedEffects: c.droppedEffects,
+			rejectedActions: c.rejectedActions,
 			complete: !this.incomplete && c.activated === c.ok + c.failed,
 		};
 	}
@@ -924,6 +933,7 @@ class KernelSimulation implements Simulation {
 			);
 		} catch (e) {
 			const d = describeError(e);
+			if (e instanceof ActionRejected) this.counts.rejectedActions += 1;
 			this.recordFailure(
 				{
 					stage: "resolve",

@@ -1,4 +1,5 @@
 import { existsSync, readFileSync, statSync } from "node:fs";
+import { dirname, resolve } from "node:path";
 import pkg from "../package.json" with { type: "json" };
 import { registerBuiltinExecutors } from "./agents";
 import { inspectRun, type InspectQuery, type InspectResult } from "./core/inspect";
@@ -11,11 +12,13 @@ import {
 	type ResumeOptions as CoreResumeOptions,
 	type RunOptions as CoreRunOptions,
 } from "./core/run";
-import { digestRun } from "./core/runDir";
+import { err, ok } from "./core/result";
+import { digestRun, readRunScenario, runDirOfCheckpoint } from "./core/runDir";
 import { parseScenarioYaml, type ScenarioIssue } from "./core/scenario";
 import type { GatewayFactory } from "./core/simulation";
 import type { FailureInfo, Result, RunResult, Scenario } from "./core/types";
 import { createGateway } from "./llm/gateway";
+import { loadPlugins, type PluginLoadError } from "./plugins";
 import { registerBuiltinMetrics } from "./metrics";
 import { registerBuiltinModules } from "./modules";
 import { registerBuiltinPolicies } from "./policies";
@@ -82,6 +85,21 @@ export type { InspectQuery, InspectResult } from "./core/inspect";
 export type { ReplayResult } from "./core/replay";
 export type { ScenarioIssue } from "./core/scenario";
 export type { LogLevel, LogSink } from "./logging/logger";
+export { isLogLevel } from "./logging/logger";
+export type { PluginLoadError } from "./plugins";
+export { loadPlugins } from "./plugins";
+export type { DoctorCheck, DoctorOptions } from "./doctor";
+export {
+	API_KEY_ENV,
+	BASE_URL_ENV,
+	DEFAULT_BASE_URL,
+	DEFAULT_MODEL,
+	MODEL_ENV,
+	doctor,
+} from "./doctor";
+export type { ProbeCheck, ProbeOptions, ProbeResult } from "./llm/probe";
+export { PROBE_MAX_CALLS, probeEndpoint } from "./llm/probe";
+export { EXAMPLES_DIR, copyExample, examplePath, listExamples } from "./examples";
 export { ActionRejected, defineAction, zodToJsonSchema } from "./core/actions";
 export { loadCheckpoint, saveCheckpoint } from "./core/checkpoint";
 export { ZERO_EVENT_ID, newEntityId, newEventId, toEntityId, toEventId } from "./core/ids";
@@ -120,46 +138,73 @@ export const createDefaultRegistry = (): Registry => {
 	return registry;
 };
 
+const withResolvedPlugins = (scenario: Scenario, baseDir: string): Scenario =>
+	scenario.plugins === undefined
+		? scenario
+		: { ...scenario, plugins: scenario.plugins.map((p) => resolve(baseDir, p)) };
+
 export const loadScenario = (pathOrText: string): Result<Scenario, readonly ScenarioIssue[]> => {
 	const isFile = existsSync(pathOrText) && statSync(pathOrText).isFile();
-	return parseScenarioYaml(isFile ? readFileSync(pathOrText, "utf8") : pathOrText);
+	const parsed = parseScenarioYaml(isFile ? readFileSync(pathOrText, "utf8") : pathOrText);
+	if (!parsed.ok) return parsed;
+	return ok(
+		withResolvedPlugins(parsed.value, isFile ? dirname(resolve(pathOrText)) : process.cwd()),
+	);
 };
 
-export interface RunOptions extends Omit<CoreRunOptions, "createGateway"> {
+interface PluginOptions {
 	readonly registry?: Registry;
+	readonly plugins?: readonly string[];
 }
 
-export type ResumeOptions = Omit<CoreResumeOptions, "createGateway"> & {
-	readonly registry?: Registry;
-};
+export interface RunOptions extends Omit<CoreRunOptions, "createGateway">, PluginOptions {}
 
-const withGateway = <O extends { readonly registry?: Registry }>(
+export type ResumeOptions = Omit<CoreResumeOptions, "createGateway"> & PluginOptions;
+
+const withGateway = <O extends PluginOptions>(
 	opts: O,
-): Omit<O, "registry"> & { readonly createGateway: GatewayFactory } => {
-	const { registry: _registry, ...rest } = opts;
+): Omit<O, "registry" | "plugins"> & { readonly createGateway: GatewayFactory } => {
+	const { registry: _registry, plugins: _plugins, ...rest } = opts;
 	return { ...rest, createGateway: gatewayFactory };
 };
 
-export const runScenario = (
+const pluginFailure = (e: PluginLoadError): FailureInfo => ({
+	stage: "instantiate",
+	excType: "PluginLoad",
+	message: `plugin ${e.path}: ${e.message}`,
+	stack: "",
+});
+
+const assemble = async (
+	declared: readonly string[] | undefined,
+	opts: PluginOptions,
+): Promise<Result<Registry, FailureInfo>> => {
+	const registry = opts.registry ?? createDefaultRegistry();
+	const loaded = await loadPlugins(registry, [...(declared ?? []), ...(opts.plugins ?? [])]);
+	return loaded.ok ? ok(registry) : err(pluginFailure(loaded.error));
+};
+
+export const runScenario = async (
 	scenario: Scenario,
 	outDir: string,
 	opts: RunOptions = {},
-): Promise<Result<RunResult, FailureInfo>> =>
-	coreRunScenario(scenario, opts.registry ?? createDefaultRegistry(), outDir, withGateway(opts));
+): Promise<Result<RunResult, FailureInfo>> => {
+	const registry = await assemble(scenario.plugins, opts);
+	if (!registry.ok) return registry;
+	return coreRunScenario(scenario, registry.value, outDir, withGateway(opts));
+};
 
-export const resume = (
+export const resume = async (
 	checkpointDir: string,
 	ticks: number,
 	outDir: string,
 	opts: ResumeOptions = {},
-): Promise<Result<RunResult, FailureInfo>> =>
-	coreResumeRun(
-		checkpointDir,
-		ticks,
-		opts.registry ?? createDefaultRegistry(),
-		outDir,
-		withGateway(opts),
-	);
+): Promise<Result<RunResult, FailureInfo>> => {
+	const scenario = readRunScenario(runDirOfCheckpoint(checkpointDir));
+	const registry = await assemble(scenario.ok ? scenario.value.plugins : undefined, opts);
+	if (!registry.ok) return registry;
+	return coreResumeRun(checkpointDir, ticks, registry.value, outDir, withGateway(opts));
+};
 
 export const replay = (runDir: string, toTick?: number): Result<ReplayResult, string> =>
 	replayRun(runDir, toTick);

@@ -145,6 +145,7 @@ export const ScenarioSchema = z.object({
 	steps: z.array(StepSchema).default([]),
 	llm: LLMSpecSchema.prefault({}),
 	prompt: PromptOptionsSchema.prefault({}),
+	plugins: z.array(z.string().min(1)).optional(),
 });
 
 export const ArmSchema = z.object({

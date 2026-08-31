@@ -8,7 +8,7 @@ import { inspectCommand } from "./commands/inspect";
 import { replayCommand } from "./commands/replay";
 import { resumeCommand } from "./commands/resume";
 import { runCommand as runScenarioCommand } from "./commands/run";
-import { wantsDebug } from "./commands/shared";
+import { pluginPathsOf, wantsDebug } from "./commands/shared";
 
 const subCommands = {
 	run: runScenarioCommand,
@@ -39,6 +39,7 @@ const cli = async (rawArgs: readonly string[]): Promise<number> => {
 		return 0;
 	}
 	try {
+		pluginPathsOf(rawArgs);
 		await runCommand(main, { rawArgs: [...rawArgs] });
 		return 0;
 	} catch (e) {

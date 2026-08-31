@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { CHECKPOINTS_DIR } from "../../src/core/runDir";
 import { eventLogPath, openSqliteEventLog } from "../../src/core/log";
-import { doctor } from "../../src/cli/commands/doctor";
+import { doctor } from "../../src/index";
 
 const ROOT = join(import.meta.dir, "../..");
 const CLI = join(ROOT, "src/cli/index.ts");
@@ -97,6 +97,14 @@ describe("simulacra CLI", () => {
 		expect(r.code).toBe(0);
 		expect(lineValue(r.stdout, "worldHash")).toBe(worldHashAt(a, 10));
 		expect(lineValue(r.stdout, "tick")).toBe("10");
+		expect(lineValue(r.stdout, "from")).toBe("checkpoint 0");
+		const negative = cli(["replay", a, "--to-tick", "-1"]);
+		expect(negative.code).toBe(1);
+		expect(negative.stderr).toContain("must not be negative");
+		const beyond = cli(["replay", a, "--to-tick", "99"]);
+		expect(beyond.code).toBe(0);
+		expect(lineValue(beyond.stdout, "tick")).toBe("15");
+		expect(lineValue(beyond.stdout, "requested")).toBe("99 (run ends at tick 15)");
 	});
 
 	test("resume from the tick 5 checkpoint reaches the same tick 10 world hash", () => {
@@ -120,6 +128,13 @@ describe("simulacra CLI", () => {
 		]);
 		expect(direct10.code).toBe(0);
 		expect(lineValue(r.stdout, "digest")).toBe(cli(["digest", d]).stdout.trim());
+		const replayed = cli(["replay", c, "--to-tick", "10"]);
+		expect(replayed.code).toBe(0);
+		expect(lineValue(replayed.stdout, "worldHash")).toBe(worldHashAt(a, 10));
+		expect(lineValue(replayed.stdout, "from")).toBe("checkpoint 5");
+		const early = cli(["replay", c, "--to-tick", "3"]);
+		expect(early.code).toBe(1);
+		expect(early.stderr).toContain("no checkpoint at or before tick 3");
 	});
 
 	test("inspect prints observation, prompt, decision and effects", () => {
@@ -144,21 +159,37 @@ describe("simulacra CLI", () => {
 		expect(missing.stderr).toContain("error: agent nobody has no decision");
 	});
 
-	test("prisoners dilemma runs with --plugin and is deterministic", () => {
+	test("prisoners dilemma loads its declared plugin, --plugin appends, and both are deterministic", () => {
 		const x = tempDir();
 		const y = tempDir();
-		const args = [PD, "--seed", "1", "--provider", "mock", "--plugin", PD_PLUGIN];
-		const rx = cli(["run", ...args, "--out", x]);
+		const z = tempDir();
+		const args = [PD, "--seed", "1", "--provider", "mock"];
+		const rx = cli(["run", ...args, "--plugin", PD_PLUGIN, "--out", x]);
 		expect(rx.stderr).toBe("");
 		expect(rx.code).toBe(0);
 		expect(rx.stdout).toContain("run prisoners_dilemma:0 succeeded");
 		expect(rx.stdout).toContain("cooperationRate=");
-		const ry = cli(["run", ...args, "--out", y]);
+		expect(rx.stdout).toContain("rejectedActions=0");
+		const ry = cli(["run", ...args, "--plugin", PD_PLUGIN, "--out", y]);
 		expect(ry.code).toBe(0);
-		expect(cli(["digest", x]).stdout).toBe(cli(["digest", y]).stdout);
-		const without = cli(["run", PD, "--provider", "mock", "--out", tempDir()]);
-		expect(without.code).toBe(1);
-		expect(without.stderr).toContain("error: run failed: ModuleCreate");
+		const without = cli(["run", ...args, "--out", z]);
+		expect(without.stderr).toBe("");
+		expect(without.code).toBe(0);
+		const dx = cli(["digest", x]).stdout;
+		expect(cli(["digest", y]).stdout).toBe(dx);
+		expect(cli(["digest", z]).stdout).toBe(dx);
+		for (const bad of [
+			["run", ...args, "--out", tempDir(), "--plugin"],
+			["run", ...args, "--plugin", "--out", tempDir()],
+			["run", ...args, "--plugin=", "--out", tempDir()],
+		]) {
+			const r = cli(bad);
+			expect(r.code).toBe(1);
+			expect(r.stderr).toContain("error: missing plugin path");
+		}
+		const broken = cli(["run", ...args, "--plugin", "nope.ts", "--out", tempDir()]);
+		expect(broken.code).toBe(1);
+		expect(broken.stderr).toContain("PluginLoad: plugin nope.ts");
 	});
 
 	test("failures exit non-zero with an error line, and --log-level debug adds the stack", () => {
@@ -201,25 +232,34 @@ describe("simulacra CLI", () => {
 describe("doctor", () => {
 	test("environment checks pass without --llm", async () => {
 		const checks = await doctor({ llm: false, cwd: tempDir() });
-		expect(checks.map((c) => c.name)).toEqual(["simulacra", "bun", "cwd writable", "examples"]);
-		expect(checks.every((c) => c.ok)).toBe(true);
+		expect(checks.ok).toBe(true);
+		if (!checks.ok) return;
+		expect(checks.value.map((c) => c.name)).toEqual([
+			"simulacra",
+			"bun",
+			"cwd writable",
+			"examples",
+		]);
+		expect(checks.value.every((c) => c.ok)).toBe(true);
 		const r = cli(["doctor"]);
 		expect(r.code).toBe(0);
 		expect(r.stdout).toContain("ok   examples");
 	});
 
 	test("--llm without a key fails; against a fake endpoint it probes structured output, concurrency and cache", async () => {
-		await expect(doctor({ llm: true, env: {}, cwd: tempDir() })).rejects.toThrow(
-			"SIMULACRA_LLM_API_KEY",
-		);
+		const noKeyResult = await doctor({ llm: true, env: {}, cwd: tempDir() });
+		expect(noKeyResult.ok).toBe(false);
+		if (!noKeyResult.ok) expect(noKeyResult.error).toContain("SIMULACRA_LLM_API_KEY");
 		let calls = 0;
 		let maxInFlight = 0;
 		let inFlight = 0;
+		const authorizations = new Set<string | null>();
 		const server = Bun.serve({
 			port: 0,
 			hostname: "127.0.0.1",
 			fetch: async (req) => {
 				calls += 1;
+				authorizations.add(req.headers.get("authorization"));
 				inFlight += 1;
 				maxInFlight = Math.max(maxInFlight, inFlight);
 				await Bun.sleep(30);
@@ -239,14 +279,17 @@ describe("doctor", () => {
 		});
 		try {
 			const baseUrl = `http://127.0.0.1:${server.port}/v1`;
-			const checks = await doctor({
+			const probed = await doctor({
 				llm: true,
 				baseUrl,
 				model: "fake",
 				cwd: tempDir(),
 				env: { SIMULACRA_LLM_API_KEY: "test-key" },
 			});
-			const byName = Object.fromEntries(checks.map((c) => [c.name, c]));
+			expect(probed.ok).toBe(true);
+			if (!probed.ok) return;
+			expect(authorizations).toEqual(new Set(["Bearer test-key"]));
+			const byName = Object.fromEntries(probed.value.map((c) => [c.name, c]));
 			expect(byName.endpoint?.ok).toBe(true);
 			expect(byName.json_schema?.ok).toBe(true);
 			expect(byName.concurrency?.ok).toBe(true);
