@@ -253,7 +253,10 @@ export interface LLMResponse {
 	readonly promptHash: string;
 	readonly responseSha: string;
 	readonly recorded: boolean;
+	readonly structured?: StructuredMode;
 }
+
+export type StructuredMode = "json_schema" | "prompt";
 
 export interface LLMFailure {
 	readonly promptHash: string;

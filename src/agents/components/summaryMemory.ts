@@ -34,7 +34,7 @@ export interface SummaryMemoryOptions {
 }
 
 export interface SummaryMemoryDeps {
-	readonly gateway: LLMGateway;
+	readonly gateway?: LLMGateway;
 	readonly logger: Logger;
 }
 
@@ -66,7 +66,7 @@ class SummaryMemory implements Component {
 	readonly reads = [CONTEXT_KEYS.memory];
 	readonly writes = [CONTEXT_KEYS.memory];
 	private readonly options: SummaryMemoryOptions;
-	private readonly gateway: LLMGateway;
+	private readonly gateway: LLMGateway | undefined;
 	private readonly logger: Logger;
 	private summaries = new Map<string, Summary>();
 	private readonly pending = new Map<string, readonly Entry[]>();
@@ -99,6 +99,24 @@ class SummaryMemory implements Component {
 		if (recent.length <= this.options.threshold) return;
 		const previous = this.summaries.get(agentId);
 		const eventId = newEventId(ctx.rng);
+		const fields = {
+			eventId,
+			runId: ctx.runId,
+			t: ctx.t,
+			seedPath: ctx.seedPath,
+			agentId,
+			provenance: "llm" as const,
+		};
+		if (this.gateway === undefined) {
+			this.recordFailure(
+				log,
+				fields,
+				FAILURE_TYPES.gatewayMissing,
+				"no gateway available",
+				false,
+			);
+			return;
+		}
 		const result = await this.gateway.complete({
 			messages: [
 				{ role: "system", content: SYSTEM },
@@ -109,31 +127,14 @@ class SummaryMemory implements Component {
 			tags: { purpose: PURPOSE, eventId, agentId },
 			homogeneousGuard: true,
 		});
-		const fields = {
-			eventId,
-			runId: ctx.runId,
-			t: ctx.t,
-			seedPath: ctx.seedPath,
-			agentId,
-			provenance: "llm" as const,
-		};
 		if (!result.ok) {
-			log.append(
-				makeEvent(fields, {
-					kind: "failure",
-					payload: {
-						stage: PURPOSE,
-						excType: FAILURE_TYPES.memorySummaryFailed,
-						message: `${result.error.excType}: ${result.error.message}`,
-						retryable: result.error.retryable,
-					},
-				}),
+			this.recordFailure(
+				log,
+				fields,
+				result.error.excType,
+				result.error.message,
+				result.error.retryable,
 			);
-			this.logger.error("memory summary failed", {
-				agentId,
-				excType: result.error.excType,
-				message: result.error.message,
-			});
 			return;
 		}
 		log.putContent(result.value.text);
@@ -158,6 +159,31 @@ class SummaryMemory implements Component {
 			t: ctx.t,
 			upTo: last === undefined ? ctx.t : last.t,
 			covered: (previous?.covered ?? 0) + recent.length,
+		});
+	}
+
+	private recordFailure(
+		log: EventLog,
+		fields: Parameters<typeof makeEvent>[0],
+		cause: string,
+		message: string,
+		retryable: boolean,
+	): void {
+		log.append(
+			makeEvent(fields, {
+				kind: "failure",
+				payload: {
+					stage: PURPOSE,
+					excType: FAILURE_TYPES.memorySummaryFailed,
+					message: `${cause}: ${message}`,
+					retryable,
+				},
+			}),
+		);
+		this.logger.error("memory summary failed", {
+			agentId: fields.agentId ?? null,
+			cause,
+			message,
 		});
 	}
 

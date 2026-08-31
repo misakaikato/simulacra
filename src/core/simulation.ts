@@ -14,6 +14,7 @@ import type {
 	EventLog,
 	Executor,
 	GraphView,
+	LLMFailure,
 	LLMGateway,
 	Metric,
 	Module,
@@ -73,13 +74,17 @@ export class IncompleteTick extends Error {
 	}
 }
 
-export type GatewayFactory = (spec: LLMSpec, logger: Logger) => LLMGateway;
+export interface GatewayOptions {
+	readonly logger: Logger;
+	readonly onFailure: (failure: LLMFailure) => void;
+}
+
+export type GatewayFactory = (spec: LLMSpec, opts: GatewayOptions) => LLMGateway;
 
 export interface SimulationDeps {
 	readonly outDir: string;
 	readonly logger: Logger;
-	readonly gateway?: LLMGateway;
-	readonly createGateway?: GatewayFactory;
+	readonly createGateway: GatewayFactory;
 	readonly log?: EventLog;
 	readonly baseDir?: string;
 }
@@ -111,7 +116,7 @@ export interface Simulation {
 	readonly world: World;
 	readonly clock: Clock;
 	readonly log: EventLog;
-	readonly gateway: LLMGateway | undefined;
+	readonly gateway: LLMGateway;
 	readonly logger: Logger;
 	step(activationOverride?: Activation): Promise<Result<TickReport, FailureInfo>>;
 	emit(init: EventInit, fields?: EventFields): Event;
@@ -168,7 +173,7 @@ class KernelSimulation implements Simulation {
 	readonly world: World;
 	readonly clock: Clock;
 	readonly log: EventLog;
-	readonly gateway: LLMGateway | undefined;
+	readonly gateway: LLMGateway;
 	readonly logger: Logger;
 	private readonly registry: Registry;
 	private readonly rootRng: Rng;
@@ -184,6 +189,7 @@ class KernelSimulation implements Simulation {
 	private eventRng: Rng;
 	private lastEventId: EventId = ZERO_EVENT_ID;
 	private incomplete = false;
+	private gatewayFailures = 0;
 	private counts = { activated: 0, ok: 0, failed: 0, parseFailures: 0, droppedEffects: 0 };
 
 	constructor(parts: {
@@ -193,7 +199,7 @@ class KernelSimulation implements Simulation {
 		readonly registry: Registry;
 		readonly world: World;
 		readonly log: EventLog;
-		readonly gateway: LLMGateway | undefined;
+		readonly gateway: LLMGateway;
 		readonly logger: Logger;
 		readonly rootRng: Rng;
 		readonly modules: ReadonlyMap<string, Module>;
@@ -252,15 +258,28 @@ class KernelSimulation implements Simulation {
 			ok: c.ok,
 			failed: c.failed,
 			parseFailures: c.parseFailures,
-			llmCalls: this.gateway?.ledger().llmCalls ?? 0,
-			llmFailures: this.gateway?.failures() ?? 0,
+			llmCalls: this.gateway.ledger().llmCalls,
+			llmFailures: this.gatewayFailures,
 			droppedEffects: c.droppedEffects,
 			complete: !this.incomplete && c.activated === c.ok + c.failed,
 		};
 	}
 
 	cost(): Cost {
-		return this.gateway?.ledger() ?? ZERO_COST;
+		return this.gateway.ledger();
+	}
+
+	recordGatewayFailure(failure: LLMFailure): void {
+		this.gatewayFailures += 1;
+		this.recordFailure(
+			{
+				stage: "llm",
+				excType: failure.excType,
+				message: failure.message,
+				retryable: failure.retryable,
+			},
+			{ provenance: "llm" },
+		);
 	}
 
 	measurements(): Readonly<Record<string, JsonValue>> {
@@ -726,7 +745,7 @@ class KernelSimulation implements Simulation {
 			action: def.name,
 			args: {},
 			provenance: "rule",
-			cost: { llmCalls: 0, promptTokens: 0, completionTokens: 0, cachedTokens: 0, wallMs: 0 },
+			cost: ZERO_COST,
 			parseOk: false,
 		};
 		const validated = this.registry.actions.validate({
@@ -1014,7 +1033,10 @@ class KernelSimulation implements Simulation {
 		},
 		fields: EventFields = {},
 	): void {
-		this.emit({ kind: "failure", payload }, { ...fields, provenance: "kernel" });
+		this.emit(
+			{ kind: "failure", payload },
+			{ ...fields, provenance: fields.provenance ?? "kernel" },
+		);
 		this.tickLogger.error(payload.message, {
 			stage: payload.stage,
 			excType: payload.excType,
@@ -1051,20 +1073,17 @@ export const createSimulation = (
 	const effective = resolvedScenario(scenario, deps);
 	const world = createWorld();
 	const rootRng = rngFromSeed(effective.seed, effective.seedPath);
-	let gateway = deps.gateway;
-	if (gateway === undefined && deps.createGateway !== undefined) {
-		try {
-			gateway = deps.createGateway(effective.llm, logger);
-		} catch (e) {
-			return instantiateError("GatewayConfig", e instanceof Error ? e.message : String(e));
-		}
+	const failureSink: { handle: (failure: LLMFailure) => void } = { handle: () => {} };
+	let gateway: LLMGateway;
+	try {
+		gateway = deps.createGateway(effective.llm, {
+			logger,
+			onFailure: (failure) => failureSink.handle(failure),
+		});
+	} catch (e) {
+		return instantiateError("GatewayConfig", e instanceof Error ? e.message : String(e));
 	}
-	const ctx: PluginContext = {
-		scenario: effective,
-		registry,
-		logger,
-		...(gateway === undefined ? {} : { gateway }),
-	};
+	const ctx: PluginContext = { scenario: effective, registry, logger, gateway };
 
 	const modules = new Map<string, Module>();
 	for (const spec of effective.modules) {
@@ -1181,22 +1200,22 @@ export const createSimulation = (
 		policy: policy.value.name,
 	});
 	const log = deps.log ?? openSqliteEventLog(eventLogPath(deps.outDir));
-	return ok(
-		new KernelSimulation({
-			runId,
-			scenario: effective,
-			scenarioHash: scenarioHash(scenario),
-			registry,
-			world,
-			log,
-			gateway,
-			logger,
-			rootRng,
-			modules,
-			executors,
-			providers,
-			policy: policy.value,
-			instruments,
-		}),
-	);
+	const simulation = new KernelSimulation({
+		runId,
+		scenario: effective,
+		scenarioHash: scenarioHash(scenario),
+		registry,
+		world,
+		log,
+		gateway,
+		logger,
+		rootRng,
+		modules,
+		executors,
+		providers,
+		policy: policy.value,
+		instruments,
+	});
+	failureSink.handle = (failure) => simulation.recordGatewayFailure(failure);
+	return ok(simulation);
 };

@@ -10,7 +10,8 @@ import {
 import { jsonlSink } from "../logging/sinks";
 import { saveCheckpoint } from "./checkpoint";
 import { FAILURE_TYPES } from "./failures";
-import type { LLMGateway, Registry } from "./protocols";
+import { makeRunId } from "./ids";
+import type { Registry } from "./protocols";
 import { err, ok } from "./result";
 import {
 	IncompleteTick,
@@ -38,8 +39,7 @@ export interface RunOptions {
 	readonly providerOverride?: string;
 	readonly logLevel?: LogLevel;
 	readonly sinks?: readonly LogSink[];
-	readonly gateway?: LLMGateway;
-	readonly createGateway?: GatewayFactory;
+	readonly createGateway: GatewayFactory;
 	readonly baseDir?: string;
 }
 
@@ -193,7 +193,7 @@ export const runScenario = async (
 	scenario: Scenario,
 	registry: Registry,
 	outDir: string,
-	opts: RunOptions = {},
+	opts: RunOptions,
 ): Promise<Result<RunResult, FailureInfo>> => {
 	const prepared = prepareOutDir(outDir, opts.overwrite ?? false);
 	if (!prepared.ok) return prepared;
@@ -212,8 +212,7 @@ export const runScenario = async (
 	const created = createSimulation(effective, registry, {
 		outDir,
 		logger,
-		...(opts.gateway === undefined ? {} : { gateway: opts.gateway }),
-		...(opts.createGateway === undefined ? {} : { createGateway: opts.createGateway }),
+		createGateway: opts.createGateway,
 		...(opts.baseDir === undefined ? {} : { baseDir: opts.baseDir }),
 	});
 	const finish = (result: RunResult): Result<RunResult, FailureInfo> => {
@@ -232,7 +231,7 @@ export const runScenario = async (
 			message: created.error.message,
 		});
 		return finish({
-			runId: `${effective.scenarioId}:${effective.replicationId}` as RunResult["runId"],
+			runId: makeRunId(effective.scenarioId, effective.replicationId),
 			scenarioHash: "",
 			seed: effective.seed,
 			status: "failed",

@@ -8,7 +8,12 @@ import { eventLogPath, openSqliteEventLog } from "../../src/core/log";
 import { RESULT_FILE, runScenario } from "../../src/core/run";
 import { createSimulation, type Simulation } from "../../src/core/simulation";
 import { silentLogger } from "../../src/logging/logger";
-import { kernelRegistry, kernelScenario, type KernelFixture } from "../helpers/kernel";
+import {
+	gatewayFactory,
+	kernelRegistry,
+	kernelScenario,
+	type KernelFixture,
+} from "../helpers/kernel";
 
 const tempDir = () => mkdtempSync(join(tmpdir(), "simulacra-fail-"));
 
@@ -17,6 +22,7 @@ const build = (fixture: KernelFixture): Simulation => {
 		outDir: tempDir(),
 		logger: silentLogger,
 		log: createMemoryEventLog(),
+		createGateway: gatewayFactory,
 	});
 	if (!created.ok) throw new Error(created.error.message);
 	return created.value;
@@ -36,6 +42,7 @@ describe("failure paths", () => {
 			kernelScenario({ steps: [{ kind: "run", ticks: 1 }] }),
 			fixture.registry,
 			out,
+			{ createGateway: gatewayFactory },
 		);
 		expect(r.ok).toBe(true);
 		if (!r.ok) return;
@@ -77,6 +84,7 @@ describe("failure paths", () => {
 			kernelScenario({ steps: [{ kind: "run", ticks: 5 }] }),
 			fixture.registry,
 			out,
+			{ createGateway: gatewayFactory },
 		);
 		expect(r.ok).toBe(true);
 		if (!r.ok) return;
@@ -185,7 +193,12 @@ describe("failure paths", () => {
 		const created = createSimulation(
 			kernelScenario({ providers: { main: { kind: "badArgs" } } }),
 			fixture.registry,
-			{ outDir: tempDir(), logger: silentLogger, log: createMemoryEventLog() },
+			{
+				outDir: tempDir(),
+				logger: silentLogger,
+				log: createMemoryEventLog(),
+				createGateway: gatewayFactory,
+			},
 		);
 		if (!created.ok) throw new Error(created.error.message);
 		const sim = created.value;

@@ -3,7 +3,13 @@ import { join } from "node:path";
 import { z } from "zod";
 import { FAILURE_TYPES } from "../core/failures";
 import { hashOf, sha256Hex } from "../core/hash";
-import type { LLMFailure, LLMGateway, LLMRequest, LLMResponse } from "../core/protocols";
+import type {
+	LLMFailure,
+	LLMGateway,
+	LLMRequest,
+	LLMResponse,
+	StructuredMode,
+} from "../core/protocols";
 import { err, ok } from "../core/result";
 import type { Cost, JsonObject, JsonValue, LLMSpec, PromptMessage, Result } from "../core/types";
 import type { Logger } from "../logging/logger";
@@ -136,6 +142,7 @@ const RecordingSchema = z.object({
 		}),
 		model: z.string(),
 		latencyMs: z.number(),
+		structured: z.enum(["json_schema", "prompt"]).optional(),
 	}),
 });
 
@@ -158,6 +165,7 @@ interface Attempted {
 	readonly model: string;
 	readonly latencyMs: number;
 	readonly attempts: number;
+	readonly structured?: StructuredMode;
 }
 
 const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
@@ -265,13 +273,21 @@ class HttpGateway implements Gateway {
 		const promptHash = hashOf(req.messages);
 		const purpose = req.tags.purpose ?? "unknown";
 		const startedAt = performance.now();
-		const settle = (r: Result<LLMResponse, LLMFailure>): Result<LLMResponse, LLMFailure> => {
-			const wallMs = performance.now() - startedAt;
-			const cost: Cost = r.ok
-				? { llmCalls: 1, ...r.value.usage, wallMs }
-				: { ...ZERO_COST, wallMs };
-			this.total = addCost(this.total, cost);
-			this.byPurpose.set(purpose, addCost(this.byPurpose.get(purpose) ?? ZERO_COST, cost));
+		const settle = (
+			r: Result<LLMResponse, LLMFailure>,
+			replayed = false,
+		): Result<LLMResponse, LLMFailure> => {
+			if (!replayed) {
+				const wallMs = performance.now() - startedAt;
+				const cost: Cost = r.ok
+					? { llmCalls: 1, ...r.value.usage, wallMs }
+					: { ...ZERO_COST, wallMs };
+				this.total = addCost(this.total, cost);
+				this.byPurpose.set(
+					purpose,
+					addCost(this.byPurpose.get(purpose) ?? ZERO_COST, cost),
+				);
+			}
 			if (r.ok) {
 				this.logger.debug("llm call", {
 					promptHash,
@@ -291,6 +307,7 @@ class HttpGateway implements Gateway {
 					attempts: r.error.attempts,
 					purpose,
 				});
+				this.onFailure?.(r.error);
 			}
 			return r;
 		};
@@ -302,14 +319,6 @@ class HttpGateway implements Gateway {
 		): Result<LLMResponse, LLMFailure> =>
 			settle(err({ promptHash, excType, message, retryable, attempts }));
 
-		if (this.started >= this.spec.budget.maxCalls)
-			return fail(
-				FAILURE_TYPES.budgetExhausted,
-				`budget of ${this.spec.budget.maxCalls} calls exhausted`,
-				false,
-				0,
-			);
-		this.started += 1;
 		this.logger.trace("llm prompt", { promptHash, preview: preview(req.messages) });
 
 		const maxTokens = Math.min(req.maxTokens, this.spec.budget.maxCompletionTokens);
@@ -341,8 +350,12 @@ class HttpGateway implements Gateway {
 						model: recording.response.model,
 						latencyMs: recording.response.latencyMs,
 						recorded: true,
+						...(recording.response.structured === undefined
+							? {}
+							: { structured: recording.response.structured }),
 					}),
 				),
+				true,
 			);
 		}
 
@@ -361,6 +374,9 @@ class HttpGateway implements Gateway {
 					model: attempted.value.model,
 					latencyMs: attempted.value.latencyMs,
 					recorded: false,
+					...(attempted.value.structured === undefined
+						? {}
+						: { structured: attempted.value.structured }),
 				}),
 			),
 		);
@@ -375,6 +391,7 @@ class HttpGateway implements Gateway {
 			readonly model: string;
 			readonly latencyMs: number;
 			readonly recorded: boolean;
+			readonly structured?: StructuredMode;
 		},
 	): LLMResponse {
 		const parsed = req.schema === undefined ? undefined : extractLastJsonBlock(body.text);
@@ -387,6 +404,7 @@ class HttpGateway implements Gateway {
 			promptHash,
 			responseSha: sha256Hex(body.text),
 			recorded: body.recorded,
+			...(body.structured === undefined ? {} : { structured: body.structured }),
 		};
 	}
 
@@ -474,6 +492,7 @@ class HttpGateway implements Gateway {
 			return err({ promptHash, ...failure, attempts });
 		};
 		let attempts = 0;
+		let sent = false;
 		for (;;) {
 			attempts += 1;
 			const promptMode = this.usePromptMode(req);
@@ -488,6 +507,18 @@ class HttpGateway implements Gateway {
 						retryable: false,
 						attempts: attempts - 1,
 					});
+				if (!sent) {
+					if (this.started >= this.spec.budget.maxCalls)
+						return err({
+							promptHash,
+							excType: FAILURE_TYPES.budgetExhausted,
+							message: `budget of ${this.spec.budget.maxCalls} calls exhausted`,
+							retryable: false,
+							attempts: 0,
+						});
+					this.started += 1;
+					sent = true;
+				}
 				const outcome = await this.send(body);
 
 				if (outcome.kind === "ok") {
@@ -517,6 +548,9 @@ class HttpGateway implements Gateway {
 						model: completion.data.model ?? this.spec.model,
 						latencyMs: outcome.latencyMs,
 						attempts,
+						...(req.schema === undefined
+							? {}
+							: { structured: promptMode ? "prompt" : "json_schema" }),
 					});
 				}
 
@@ -536,7 +570,7 @@ class HttpGateway implements Gateway {
 							retryable: true,
 							attempts,
 						};
-						this.logger.warn("structured output fallback", {
+						this.logger.error("structured output fallback", {
 							promptHash,
 							message: failure.message,
 						});
@@ -621,6 +655,7 @@ class HttpGateway implements Gateway {
 				usage: attempted.usage,
 				model: attempted.model,
 				latencyMs: attempted.latencyMs,
+				...(attempted.structured === undefined ? {} : { structured: attempted.structured }),
 			},
 		};
 		const dir = this.spec.recordDir ?? "";

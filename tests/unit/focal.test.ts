@@ -458,6 +458,38 @@ describe("FocalExecutor.after and state", () => {
 	});
 });
 
+describe("summaryMemory without a gateway", () => {
+	test("records memory_summary_failed and keeps the raw memory", async () => {
+		const scenario = scenarioOf();
+		const { world, ids } = buildWorld(scenario);
+		const log = createMemoryEventLog();
+		const ann = ids[0]!;
+		seedDecisions(log, ann, 3);
+		const executor = executorOf(contextOf(scenario), [
+			recentMemory({ k: 10 }),
+			summaryMemory({ threshold: 1 }, { logger: silentLogger }),
+		]);
+		await executor.observe(world, [ann], timeAt(3), log, rngFromSeed(5, [0, 3]));
+		await executor.after([decisionOf(ann)], { applied: 0, rejected: [] }, log);
+		const failures = log.query({ kind: ["failure"] });
+		expect(failures).toHaveLength(1);
+		if (failures[0]?.kind === "failure") {
+			expect(failures[0].payload.excType).toBe(FAILURE_TYPES.memorySummaryFailed);
+			expect(failures[0].payload.message).toContain(FAILURE_TYPES.gatewayMissing);
+		}
+		expect(log.query({ kind: ["llm_call"] })).toHaveLength(0);
+		const requests = await executor.observe(
+			world,
+			[ann],
+			timeAt(4),
+			log,
+			rngFromSeed(5, [0, 4]),
+		);
+		const text = requests[0]?.prompt?.messages.map((m) => m.content).join("\n") ?? "";
+		expect(text).toContain("reason 0");
+	});
+});
+
 describe("registerBuiltinExecutors", () => {
 	test("builds a focal executor with components from a spec", () => {
 		const scenario = scenarioOf();

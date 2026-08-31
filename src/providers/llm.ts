@@ -29,7 +29,7 @@ export interface LlmProviderOptions {
 }
 
 export interface LlmProviderDeps {
-	readonly gateway: LLMGateway;
+	readonly gateway?: LLMGateway;
 	readonly logger: Logger;
 }
 
@@ -45,10 +45,16 @@ const NO_PROMPT: Omit<ProviderFailure, "agentId"> = {
 	excType: FAILURE_TYPES.noPrompt,
 };
 
+const NO_GATEWAY: Omit<ProviderFailure, "agentId"> = {
+	reason: "gateway_missing",
+	retryable: false,
+	excType: FAILURE_TYPES.gatewayMissing,
+};
+
 class LlmProvider implements DecisionProvider {
 	readonly name: string;
 	private readonly options: LlmProviderOptions;
-	private readonly gateway: LLMGateway;
+	private readonly gateway: LLMGateway | undefined;
 	private readonly logger: Logger;
 	private seedPath: readonly number[] = [];
 
@@ -63,10 +69,13 @@ class LlmProvider implements DecisionProvider {
 		requests: readonly DecisionRequest[],
 		ctx: RoundContext,
 	): Promise<readonly Result<Decision, ProviderFailure>[]> {
+		const gateway = this.gateway;
+		if (gateway === undefined)
+			return requests.map((req) => err({ agentId: req.agentId, ...NO_GATEWAY }));
 		const indexed = requests.flatMap((req, index) =>
 			req.prompt === undefined ? [] : [{ req, index, llm: this.toLlmRequest(req, ctx) }],
 		);
-		const responses = await this.gateway.completeMany(indexed.map((x) => x.llm));
+		const responses = await gateway.completeMany(indexed.map((x) => x.llm));
 		const eventRng = rngFromSeed(this.options.seed, [
 			...ctx.seedPath,
 			keyFromLabel(`provider:${this.name}`),
@@ -148,6 +157,7 @@ class LlmProvider implements DecisionProvider {
 							temperature: this.options.temperature,
 							maxTokens: this.options.maxTokens,
 							seed: this.options.seed,
+							structured: response.structured ?? null,
 						},
 						usage: response.usage,
 						latencyMs: response.latencyMs,

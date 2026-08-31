@@ -8,7 +8,12 @@ import { ok } from "../../src/core/result";
 import { IncompleteTick, createSimulation, type Simulation } from "../../src/core/simulation";
 import type { EntityId, EventKind, JsonObject } from "../../src/core/types";
 import { silentLogger } from "../../src/logging/logger";
-import { kernelRegistry, kernelScenario, type KernelFixture } from "../helpers/kernel";
+import {
+	gatewayFactory,
+	kernelRegistry,
+	kernelScenario,
+	type KernelFixture,
+} from "../helpers/kernel";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -23,6 +28,7 @@ const build = (
 		outDir: tempDir(),
 		logger: silentLogger,
 		log: createMemoryEventLog(),
+		createGateway: gatewayFactory,
 	});
 	if (!created.ok) throw new Error(`${created.error.excType}: ${created.error.message}`);
 	return created.value;
@@ -54,7 +60,12 @@ describe("createSimulation", () => {
 		const unknownProvider = createSimulation(
 			kernelScenario({ providers: { other: { kind: "scripted" } } }),
 			fixture.registry,
-			{ outDir: tempDir(), logger: silentLogger, log: createMemoryEventLog() },
+			{
+				outDir: tempDir(),
+				logger: silentLogger,
+				log: createMemoryEventLog(),
+				createGateway: gatewayFactory,
+			},
 		);
 		expect(unknownProvider.ok).toBe(false);
 		if (!unknownProvider.ok) {
@@ -64,7 +75,12 @@ describe("createSimulation", () => {
 		const unknownModule = createSimulation(
 			kernelScenario({ modules: [{ kind: "nope" }] }),
 			fixture.registry,
-			{ outDir: tempDir(), logger: silentLogger, log: createMemoryEventLog() },
+			{
+				outDir: tempDir(),
+				logger: silentLogger,
+				log: createMemoryEventLog(),
+				createGateway: gatewayFactory,
+			},
 		);
 		expect(unknownModule.ok && "").toBe(false);
 		const badReads = createSimulation(
@@ -77,7 +93,12 @@ describe("createSimulation", () => {
 				],
 			}),
 			fixture.registry,
-			{ outDir: tempDir(), logger: silentLogger, log: createMemoryEventLog() },
+			{
+				outDir: tempDir(),
+				logger: silentLogger,
+				log: createMemoryEventLog(),
+				createGateway: gatewayFactory,
+			},
 		);
 		expect(badReads.ok).toBe(false);
 		if (!badReads.ok) expect(badReads.error.excType).toBe("ExecutorDeclare");

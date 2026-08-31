@@ -18,6 +18,7 @@ import type {
 	WorldView,
 } from "../core/protocols";
 import { parseOptions } from "../core/registry";
+import { JsonValueSchema } from "../core/schema";
 import { err, ok } from "../core/result";
 import { keyFromLabel } from "../core/rng";
 import type {
@@ -51,7 +52,7 @@ const RESERVED_KEYS: readonly string[] = [
 	CONTEXT_KEYS.memory,
 ];
 
-const StateSchema = z.object({ components: z.array(z.unknown()) });
+const StateSchema = z.object({ components: z.array(JsonValueSchema) });
 
 interface TickStash {
 	readonly t: LogicalTime;
@@ -216,7 +217,7 @@ class FocalExecutor implements Executor {
 		if (!parsed.success) return;
 		this.components.forEach((c, i) => {
 			const state = parsed.data.components[i];
-			if (state !== undefined) c.setState(state as JsonValue);
+			if (state !== undefined) c.setState(state);
 		});
 	}
 

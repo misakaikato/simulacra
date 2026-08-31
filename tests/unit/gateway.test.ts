@@ -338,7 +338,7 @@ describe("gateway record and replay", () => {
 			expect(replayed.value.latencyMs).toBe(live.value.latencyMs);
 		}
 		expect(ep.calls).toBe(callsAfterRecord);
-		expect(replayer.ledger().llmCalls).toBe(1);
+		expect(replayer.ledger().llmCalls).toBe(0);
 
 		const miss = await replayer.complete(request("s", "other", { seed: 7 }));
 		expect(miss.ok).toBe(false);
@@ -385,6 +385,100 @@ describe("gateway budget, nonce, circuit and ledger", () => {
 		}
 		expect(ep.calls).toBe(2);
 		expect(ep.seen[0]?.body.max_tokens).toBe(32);
+	});
+
+	test("replay hits consume neither budget nor ledger", async () => {
+		const ep = endpoint(() => ({ status: 200, body: completion('{"action": "wave"}') }));
+		const recordDir = tempDir();
+		const recorder = createGateway(spec(ep.baseUrl, { mode: "record", recordDir }), {
+			logger: silentLogger,
+		});
+		const req = request("s", "u", { seed: 1, schema: { type: "object" } });
+		expect((await recorder.complete(req)).ok).toBe(true);
+		const failures: LLMFailure[] = [];
+		const replayer = createGateway(
+			spec(ep.baseUrl, {
+				mode: "replay",
+				recordDir,
+				budget: { maxCalls: 5, maxCompletionTokens: 100 },
+			}),
+			{ logger: silentLogger, onFailure: (f) => failures.push(f) },
+		);
+		const results = await replayer.completeMany(Array.from({ length: 100 }, () => req));
+		expect(results.every((r) => r.ok && r.value.recorded)).toBe(true);
+		expect(results.every((r) => r.ok && r.value.structured === "json_schema")).toBe(true);
+		expect(replayer.ledger().llmCalls).toBe(0);
+		expect(replayer.ledger().promptTokens).toBe(0);
+		expect(replayer.callsStarted()).toBe(0);
+		expect(failures).toHaveLength(0);
+		expect(ep.calls).toBe(1);
+	});
+
+	test("circuit-open and budget refusals do not consume the budget", async () => {
+		const ep = endpoint(() => ({ status: 400, body: { error: "nope" } }));
+		const failures: LLMFailure[] = [];
+		const gw = createGateway(
+			spec(ep.baseUrl, {
+				concurrency: { initial: 1, max: 1 },
+				budget: { maxCalls: 12, maxCompletionTokens: 100 },
+			}),
+			{ logger: silentLogger, backoffBaseMs: 1, onFailure: (f) => failures.push(f) },
+		);
+		const batch = await gw.completeMany(
+			Array.from({ length: 14 }, (_, i) => request("s", `u${i}`)),
+		);
+		expect(
+			batch.filter((r) => !r.ok && r.error.excType === FAILURE_TYPES.circuitOpen),
+		).toHaveLength(4);
+		expect(gw.callsStarted()).toBe(10);
+		expect(ep.calls).toBe(10);
+		expect(failures).toHaveLength(14);
+		const later = await gw.completeMany([
+			request("s", "a"),
+			request("s", "b"),
+			request("s", "c"),
+		]);
+		expect(later.map((r) => (r.ok ? "ok" : r.error.excType))).toEqual([
+			FAILURE_TYPES.clientError,
+			FAILURE_TYPES.clientError,
+			FAILURE_TYPES.budgetExhausted,
+		]);
+		expect(gw.callsStarted()).toBe(12);
+		expect(ep.calls).toBe(12);
+		expect(failures.filter((f) => f.excType === FAILURE_TYPES.budgetExhausted)).toHaveLength(1);
+		expect(gw.failures()).toBe(17);
+	});
+
+	test("every final failure and the structured fallback reach onFailure, the fallback logs at error", async () => {
+		const ep = endpoint((seen) =>
+			"response_format" in seen.body
+				? { status: 400, body: { error: "no schema" } }
+				: JSON.stringify(seen.body.messages).includes('"content":"u"')
+					? { status: 503 }
+					: { status: 200, body: completion('{"action": "x"}') },
+		);
+		const failures: LLMFailure[] = [];
+		const sink = memorySink();
+		const gw = createGateway(spec(ep.baseUrl), {
+			logger: createLogger({ level: "debug", sinks: [sink] }),
+			backoffBaseMs: 1,
+			onFailure: (f) => failures.push(f),
+		});
+		const first = await gw.complete(request("s", "u", { schema: { type: "object" } }));
+		expect(first.ok).toBe(false);
+		if (!first.ok) expect(first.error.excType).toBe(FAILURE_TYPES.serverError);
+		expect(failures.map((f) => f.excType)).toEqual([
+			FAILURE_TYPES.structuredFallback,
+			FAILURE_TYPES.serverError,
+		]);
+		expect(failures[1]?.retryable).toBe(true);
+		expect(
+			sink.records.filter((r) => r.msg === "structured output fallback").map((r) => r.level),
+		).toEqual(["error"]);
+		const second = await gw.complete(request("s", "v", { schema: { type: "object" } }));
+		expect(second.ok && second.value.structured).toBe("prompt");
+		const plain = await gw.complete(request("s", "w"));
+		expect(plain.ok && plain.value.structured).toBeUndefined();
 	});
 
 	test("homogeneousGuard appends a nonce to system without changing promptHash", async () => {

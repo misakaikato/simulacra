@@ -10,6 +10,7 @@ export const FAILURE_TYPES = {
 	network: "NetworkError",
 	malformed: "MalformedResponse",
 	noPrompt: "no_prompt",
+	gatewayMissing: "gateway_missing",
 	parseFailure: "parse_failure",
 	invalidAction: "invalid_action",
 	noAvailableActions: "no_available_actions",

@@ -7,9 +7,13 @@ import type { DecisionProvider, Metric, Module, Registry } from "../../src/core/
 import { createRegistry } from "../../src/core/registry";
 import { err, ok } from "../../src/core/result";
 import { parseScenario } from "../../src/core/scenario";
+import type { GatewayFactory } from "../../src/core/simulation";
 import type { Decision, DecisionRequest, JsonObject, Scenario } from "../../src/core/types";
+import { createGateway } from "../../src/llm/gateway";
 import { registerBuiltinPolicies } from "../../src/policies";
 import { registerBuiltinProviders } from "../../src/providers";
+
+export const gatewayFactory: GatewayFactory = (spec, opts) => createGateway(spec, opts);
 
 export const ZERO_COST = {
 	llmCalls: 0,
