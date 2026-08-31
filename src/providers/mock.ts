@@ -22,6 +22,10 @@ const ZERO_COST: Cost = {
 	wallMs: 0,
 };
 
+export const ID_PLACEHOLDER = "...";
+const ID_SUFFIX = "Id";
+const TARGET_FIELD = "target";
+
 const isObject = (v: JsonValue | undefined): v is JsonObject =>
 	typeof v === "object" && v !== null && !Array.isArray(v);
 
@@ -45,7 +49,7 @@ export const exampleFromJsonSchema = (schema: JsonValue): JsonValue => {
 			return out;
 		}
 		case "string":
-			return "...";
+			return ID_PLACEHOLDER;
 		case "number":
 		case "integer":
 			return 0;
@@ -58,8 +62,65 @@ export const exampleFromJsonSchema = (schema: JsonValue): JsonValue => {
 	}
 };
 
+// Id-typed parameters are filled from the lists the agent can see in its observation
+
+export interface CandidateGroup {
+	readonly key: string;
+	readonly ids: readonly string[];
+	readonly fromObjects: boolean;
+}
+
+const idsOfObjects = (items: readonly JsonValue[]): readonly string[] =>
+	items.flatMap((item) => (isObject(item) && typeof item.id === "string" ? [item.id] : []));
+
+export const candidateGroupsOf = (observation: JsonObject): readonly CandidateGroup[] =>
+	Object.keys(observation)
+		.sort()
+		.flatMap((key): readonly CandidateGroup[] => {
+			const value = observation[key];
+			if (!Array.isArray(value) || value.length === 0) return [];
+			if (value.every((v) => typeof v === "string"))
+				return [{ key, ids: value as readonly string[], fromObjects: false }];
+			const ids = idsOfObjects(value);
+			return ids.length === 0 ? [] : [{ key, ids, fromObjects: true }];
+		});
+
+export const isIdField = (name: string): boolean =>
+	name === TARGET_FIELD || (name.length > ID_SUFFIX.length && name.endsWith(ID_SUFFIX));
+
+export const candidatesForField = (
+	field: string,
+	groups: readonly CandidateGroup[],
+): readonly string[] | undefined => {
+	if (groups.length === 0) return undefined;
+	const stem =
+		field === TARGET_FIELD ? undefined : field.slice(0, -ID_SUFFIX.length).toLowerCase();
+	const byKey =
+		stem === undefined ? undefined : groups.find((g) => g.key.toLowerCase().includes(stem));
+	if (byKey !== undefined) return byKey.ids;
+	const fromObjects = field !== TARGET_FIELD;
+	return groups.find((g) => g.fromObjects === fromObjects)?.ids;
+};
+
 const indexFromHash = (hash: string, n: number): number =>
 	Number.parseInt(hash.slice(0, 8), 16) % n;
+
+export const withCandidateIds = (
+	args: JsonObject,
+	observation: JsonObject,
+	hashKey: readonly JsonValue[],
+): JsonObject => {
+	const groups = candidateGroupsOf(observation);
+	const out: Record<string, JsonValue> = { ...args };
+	for (const [field, value] of Object.entries(args)) {
+		if (value !== ID_PLACEHOLDER || !isIdField(field)) continue;
+		const candidates = candidatesForField(field, groups);
+		if (candidates === undefined || candidates.length === 0) continue;
+		const chosen = candidates[indexFromHash(hashOf([...hashKey, field]), candidates.length)];
+		if (chosen !== undefined) out[field] = chosen;
+	}
+	return out;
+};
 
 class MockProvider implements DecisionProvider {
 	readonly name: string;
@@ -110,7 +171,11 @@ class MockProvider implements DecisionProvider {
 				excType: FAILURE_TYPES.invalidAction,
 			});
 		const example = exampleFromJsonSchema(zodToJsonSchema(def.params));
-		const args = isObject(example) ? example : {};
+		const args = withCandidateIds(isObject(example) ? example : {}, req.observation, [
+			key,
+			[...ctx.seedPath],
+			req.agentId,
+		]);
 		const validated = this.actions.validate({
 			agentId: req.agentId,
 			name: action,

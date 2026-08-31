@@ -19,7 +19,13 @@ import { createGateway } from "../../src/llm/gateway";
 import { silentLogger } from "../../src/logging/logger";
 import { registerBuiltinProviders } from "../../src/providers";
 import { createLlmProvider } from "../../src/providers/llm";
-import { createMockProvider, exampleFromJsonSchema } from "../../src/providers/mock";
+import {
+	ID_PLACEHOLDER,
+	candidatesForField,
+	createMockProvider,
+	exampleFromJsonSchema,
+	withCandidateIds,
+} from "../../src/providers/mock";
 import { createRuleProvider } from "../../src/providers/rule";
 
 process.env.NO_PROXY ??= "127.0.0.1,localhost";
@@ -165,6 +171,74 @@ describe("mock provider", () => {
 		expect(provider.getState()).toEqual({ decided: 5 });
 		provider.reset([1]);
 		expect(provider.getState()).toEqual({ decided: 0 });
+	});
+
+	test("id-typed args are drawn from the observation's feed and neighbors", async () => {
+		const registry = createRegistry();
+		const idAction = (name: string, params: z.ZodObject) =>
+			defineAction({
+				name,
+				description: name,
+				params,
+				requiresModules: [],
+				fallback: name === "silent",
+				resolve: async () => [],
+			});
+		for (const action of [
+			idAction("repost", z.object({ postId: z.string().min(1) })),
+			idAction("like", z.object({ postId: z.string().min(1) })),
+			idAction("reply", z.object({ postId: z.string().min(1), content: z.string() })),
+			idAction("follow", z.object({ target: z.string().min(1) })),
+			idAction("silent", z.object({})),
+		])
+			registry.actions.register(action);
+		const provider = createMockProvider(registry.actions);
+		const feed = [
+			{ id: "post-a", author: "x", content: "a" },
+			{ id: "post-b", author: "y", content: "b" },
+		];
+		const neighbors = ["agent-1", "agent-2", "agent-3"];
+		const observation = { feed, neighbors, mood: "calm" };
+		const reqs = (["repost", "like", "reply", "follow"] as const).map((name) =>
+			request(agentA, { observation, actionSpace: [name] }),
+		);
+		const results = await provider.decide(reqs, roundContext());
+		expect(results).toHaveLength(4);
+		const args = results.map((r) => (r.ok ? r.value.args : {}));
+		for (const a of args.slice(0, 3))
+			expect(["post-a", "post-b"]).toContain(a.postId as string);
+		expect(neighbors).toContain(args[3]?.target as string);
+		expect(await provider.decide(reqs, roundContext())).toEqual(results);
+		const other = await provider.decide(reqs, roundContext([0, 9]));
+		expect(other.map((r) => (r.ok ? r.value.args : {}))).not.toEqual(args);
+		const [empty] = await provider.decide(
+			[request(agentA, { observation: { feed: [] }, actionSpace: ["repost"] })],
+			roundContext(),
+		);
+		expect(empty?.ok && empty.value.args.postId).toBe(ID_PLACEHOLDER);
+	});
+
+	test("candidate selection matches keys by stem and falls back by shape", () => {
+		const feed = [{ id: "p1" }, { id: "p2" }];
+		const neighbors = ["n1"];
+		const observation = { feed, neighbors, posts: [{ id: "q1" }], count: 3, empty: [] };
+		const args = withCandidateIds(
+			{ postId: ID_PLACEHOLDER, target: ID_PLACEHOLDER, userId: ID_PLACEHOLDER, text: "..." },
+			observation,
+			["k"],
+		);
+		expect(args.postId).toBe("q1");
+		expect(args.target).toBe("n1");
+		expect(["p1", "p2"]).toContain(args.userId as string);
+		expect(args.text).toBe("...");
+		expect(candidatesForField("target", [])).toBeUndefined();
+		expect(withCandidateIds({ target: ID_PLACEHOLDER }, { feed }, ["k"]).target).toBe(
+			ID_PLACEHOLDER,
+		);
+		expect(withCandidateIds({ postId: ID_PLACEHOLDER }, { neighbors }, ["k"]).postId).toBe(
+			ID_PLACEHOLDER,
+		);
+		expect(withCandidateIds({ postId: "kept" }, observation, ["k"]).postId).toBe("kept");
 	});
 
 	test("exampleFromJsonSchema fills required fields with fixed values", () => {
