@@ -813,3 +813,7 @@ simulacra/
 - `resume` 从 `<runDir>/scenario.json` 读原场景并跳过检查点已覆盖的 steps；同一 tick 不重复写检查点；`rng.json` 增加 `boundaryEvents` 用于对齐边界事件 id。
 - `replay --to-tick N` 表示 tick N 开始时的状态，与 `checkpoints/N` 对齐。
 - `params.ts`：模块、策略、执行体的 options 支持 `{ $param: "name", map?: {...} }` 引用 `scenario.params`，装配前解析。
+- 分层守护扩展到入口：`src/cli`、`src/api`、`src/mcp` 只 import `src/index.ts`（相对路径 `../index` 或 `../../index`），`layering.test.ts` 守护；`doctor` 的端点探测逻辑与 `isLogLevel` 等由公共 API 导出，MCP 的 `doctor` 工具复用同一函数。
+- `Integrity` 增加 `rejectedActions`（动作解析被拒，即 `ActionRejected` 失败）计数，`complete` 的定义不变。
+- Scenario 增加可选 `plugins: string[]`（相对场景文件所在目录的模块路径，模块导出 `register(registry)`），`loadScenario` 记录来源目录，`runScenario` 与 harness 装配前自动装载；CLI `--plugin` 为追加。审计示例 `examples/prisoners_dilemma/audit.yaml` 依赖此字段而非 `--plugin`。
+- `replay` 从不晚于目标 tick 的最早检查点开始折叠（续跑输出目录没有 tick 0 检查点时从其首个检查点起）。
