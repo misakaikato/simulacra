@@ -408,11 +408,14 @@ export type Hypothesis = DeepReadonly<z.infer<typeof HypothesisSchema>>;
 export type PerturbationAxis = DeepReadonly<z.infer<typeof PerturbationAxisSchema>>;
 export type AuditPlan = DeepReadonly<z.infer<typeof AuditPlanSchema>>;
 
+export type ConditionFlag = "identicalToBase";
+
 export interface Condition {
 	readonly conditionId: string;
 	readonly axisValues: JsonObject;
 	readonly model: string;
 	readonly scenario: Scenario;
+	readonly flags?: readonly ConditionFlag[];
 }
 
 export interface PairwiseTest {

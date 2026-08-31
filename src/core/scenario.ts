@@ -1,3 +1,4 @@
+import { resolve } from "node:path";
 import { parse as parseYaml } from "yaml";
 import type { z } from "zod";
 import { hashOf } from "./hash";
@@ -22,6 +23,11 @@ export const parseScenarioYaml = (text: string): Result<Scenario, readonly Scena
 	}
 	return parseScenario(doc);
 };
+
+export const resolveScenarioPlugins = (scenario: Scenario, baseDir: string): Scenario =>
+	scenario.plugins === undefined
+		? scenario
+		: { ...scenario, plugins: scenario.plugins.map((p) => resolve(baseDir, p)) };
 
 export const spawnReplications = (s: Scenario, n: number): readonly Scenario[] =>
 	Array.from({ length: n }, (_, i) => ({
