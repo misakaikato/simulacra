@@ -817,3 +817,4 @@ simulacra/
 - `Integrity` 增加 `rejectedActions`（动作解析被拒，即 `ActionRejected` 失败）计数，`complete` 的定义不变。
 - Scenario 增加可选 `plugins: string[]`（相对场景文件所在目录的模块路径，模块导出 `register(registry)`），`loadScenario` 记录来源目录，`runScenario` 与 harness 装配前自动装载；CLI `--plugin` 为追加。审计示例 `examples/prisoners_dilemma/audit.yaml` 依赖此字段而非 `--plugin`。
 - `replay` 从不晚于目标 tick 的最早检查点开始折叠（续跑输出目录没有 tick 0 检查点时从其首个检查点起）。
+- 公共 API 新增模块：`src/llm/probe.ts`（`probeEndpoint`）、`src/doctor.ts`（`doctor` 返回 `Result<DoctorCheck[], string>`）、`src/examples.ts`（`listExamples/copyExample/examplePath`）、`src/plugins.ts`（`loadPlugins`，按绝对路径去重），均经 `src/index.ts` 导出。`replay` 结果含 `fromTick`。
