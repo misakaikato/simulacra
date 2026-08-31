@@ -1,6 +1,7 @@
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import pkg from "../package.json" with { type: "json" };
+import { registerBuiltinAdapters } from "./adapters";
 import { registerBuiltinExecutors } from "./agents";
 import { inspectRun, type InspectQuery, type InspectResult } from "./core/inspect";
 import type { Registry } from "./core/protocols";
@@ -180,6 +181,29 @@ export {
 	runPool,
 } from "./harness/runner";
 export { escapeHtml, formatNumber, renderReportHtml } from "./harness/report";
+export type {
+	MetricRequest,
+	OasisAdapterOptions,
+	OasisImportOptions,
+	OasisImportSummary,
+	ScriptAdapterOptions,
+	ScriptResult,
+} from "./adapters";
+export {
+	OASIS_ADAPTER_KIND,
+	OASIS_DB_FILE,
+	OASIS_SCENARIO_ID,
+	OASIS_WORLD_FILE,
+	SCRIPT_ADAPTER_KIND,
+	SCRIPT_CONFIG_FILE,
+	SCRIPT_LOG_FILE,
+	SCRIPT_RESULT_FILE,
+	ScriptResultSchema,
+	createOasisAdapter,
+	createScriptAdapter,
+	importOasis,
+	registerBuiltinAdapters,
+} from "./adapters";
 export * as stats from "./harness/stats";
 
 export const version: string = pkg.version;
@@ -194,6 +218,7 @@ export const createDefaultRegistry = (): Registry => {
 		registerBuiltinExecutors(registry),
 		registerBuiltinModules(registry),
 		registerBuiltinMetrics(registry),
+		registerBuiltinAdapters(registry),
 	];
 	for (const r of results)
 		if (!r.ok)

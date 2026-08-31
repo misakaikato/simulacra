@@ -5,6 +5,7 @@ import { auditCommand } from "./commands/audit";
 import { digestCommand } from "./commands/digest";
 import { doctorCommand } from "./commands/doctor";
 import { examplesCommand } from "./commands/examples";
+import { importOasisCommand } from "./commands/importOasis";
 import { inspectCommand } from "./commands/inspect";
 import { replayCommand } from "./commands/replay";
 import { reportCommand } from "./commands/report";
@@ -20,6 +21,7 @@ const subCommands = {
 	digest: digestCommand,
 	audit: auditCommand,
 	report: reportCommand,
+	"import-oasis": importOasisCommand,
 	doctor: doctorCommand,
 	examples: examplesCommand,
 };
