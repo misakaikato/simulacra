@@ -798,3 +798,18 @@ simulacra/
 - `llm_call` 事件的 `params` 记录实际使用的结构化模式（`json_schema` 或 `prompt`）。
 - `LLMResponse.structured?: "json_schema" | "prompt"` 记录实际模式，录制文件同样保存并回放；`SimulationDeps`/`RunOptions` 不再接受直传 `gateway`，只接受 `createGateway` 工厂。
 - replay 命中不进入 `ledger`，`cost` 只反映真实网络请求。
+
+## 附录 C：A 阶段第 10 到 12 步裁定的细节
+
+- `module_step.summary` 为 `{ effects: Effect[], applied, rejected }`；回放折叠 `effect` 与 `module_step` 两类事件。
+- 模块初始化钩子 `Module.initialize?(world, rng)` 在人口创建后、tick 0 之前执行，产生的 `module_step` 记在 `(0,0,0)` 且不消耗 seq；tick 0 检查点表示"已初始化的世界"；回放按 `lastEventId` 跳过初始化事件。
+- `digest()` 的规范化剔除 failure 事件的 `stack` 字段（栈帧文本不确定），事件本身保留 `stack` 供 inspect。
+- 动作解析上下文的 rng 与 `newEntityId()` 按 `${executor}:${action}:${cause 事件 id}` 派生，避免同 tick 多个 agent 解析同一动作时实体 id 碰撞。
+- `Executor.owns?(world, id)` 可选钩子决定该执行体处理哪些 agent；focal 执行体支持 `where` 选项按列过滤。
+- `--provider mock` 替换全部执行体的提供者（含规则对手）；真 LLM 下规则对手保持 `rule`。
+- mock 提供者生成 id 类参数（字段名以 `Id` 结尾或为 `target`）时，从本次 `observation` 中的列表（如 `feed[].id`、`neighbors`）按确定性哈希选取；观察里没有候选时才用占位符。（B 阶段第 13 步前实施。）
+- 回音室示例不设 `group` persona 字段；分组指标按 `persona.stance` 阈值 `< -0.5`、`[-0.5, 0.5]`、`> 0.5` 划分。
+- hub "度最高"取入度；`anti`/`pro` 取全体人口立场的 min/max；`random` 从现有立场抽样；同质性 `x̄` 取人口均值，迭代上限未达区间记 warn。
+- `resume` 从 `<runDir>/scenario.json` 读原场景并跳过检查点已覆盖的 steps；同一 tick 不重复写检查点；`rng.json` 增加 `boundaryEvents` 用于对齐边界事件 id。
+- `replay --to-tick N` 表示 tick N 开始时的状态，与 `checkpoints/N` 对齐。
+- `params.ts`：模块、策略、执行体的 options 支持 `{ $param: "name", map?: {...} }` 引用 `scenario.params`，装配前解析。
