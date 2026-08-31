@@ -1,0 +1,105 @@
+scenarioId: echo_chamber
+seed: 7
+params:
+    homophily: medium
+    hub: mixed
+    feedSize: 5
+    memoryWindow: 2
+    activation: 0.3
+population:
+    n: 100
+    fields:
+        - name: name
+          dtype: str
+          sampling:
+              kind: choice
+              choices:
+                  [
+                      Ada,
+                      Ben,
+                      Cleo,
+                      Dev,
+                      Esme,
+                      Finn,
+                      Gia,
+                      Hugo,
+                      Ines,
+                      Jun,
+                      Kai,
+                      Lina,
+                      Milo,
+                      Nia,
+                      Otto,
+                      Pia,
+                      Quinn,
+                      Rae,
+                      Sol,
+                      Tess,
+                      Uma,
+                      Vik,
+                      Wren,
+                      Xan,
+                      Yara,
+                      Zed,
+                  ]
+        - name: stance
+          dtype: f64
+          sampling: { kind: range, min: -2, max: 2 }
+modules:
+    - kind: socialGraph
+      options:
+          generator: powerlaw
+          meanDegree: 8
+          exponent: 2.4
+          stanceColumn: persona.stance
+          homophilyBand:
+              $param: homophily
+              map:
+                  low: [0.02, 0.10]
+                  medium: [0.12, 0.20]
+                  high: [0.22, 0.30]
+          hubAssignment: { $param: hub }
+          hubCount: 5
+    - kind: feed
+      options:
+          size: { $param: feedSize }
+          recommender: followingFirst
+executors:
+    - kind: focal
+      name: users
+      options:
+          provider: main
+          components:
+              - kind: persona
+              - kind: instructions
+                options:
+                    text: >-
+                        You use a small social network where people discuss one contested issue.
+                        Your stance runs from -2 (strongly against) to 2 (strongly in favour).
+                        Each round you see a few posts from your feed; you may post, reply, repost,
+                        like, follow or unfollow someone, or stay silent. Act as your profile would.
+              - kind: recentMemory
+                options:
+                    k: { $param: memoryWindow }
+              - kind: feedObservation
+                options:
+                    size: { $param: feedSize }
+providers:
+    main:
+        kind: llm
+policy:
+    kind: bernoulli
+    options:
+        p: { $param: activation }
+instruments:
+    - { kind: stanceAssortativity, options: { stanceColumn: persona.stance }, every: 1 }
+    - { kind: sameGroupRatio, options: { stanceColumn: persona.stance }, every: 1 }
+    - { kind: actionShare, name: postShare, options: { action: post }, every: 1 }
+steps:
+    - { kind: run, ticks: 5 }
+    - { kind: checkpoint }
+    - { kind: run, ticks: 5 }
+    - { kind: checkpoint }
+    - { kind: run, ticks: 5 }
+llm:
+    budget: { maxCalls: 120, maxCompletionTokens: 200 }

@@ -6,6 +6,7 @@ import { makeEvent, type EventInit } from "./events";
 import { FAILURE_TYPES, PARSE_FAILURE_TYPES } from "./failures";
 import { ZERO_EVENT_ID, makeRunId, newEntityId, newEventId, toEntityId } from "./ids";
 import { eventLogPath, openSqliteEventLog } from "./log";
+import { describeParamError, resolveScenarioParams } from "./params";
 import { AGENT_ENTITY, buildPopulation } from "./population";
 import type {
 	ActivationPolicy,
@@ -400,7 +401,12 @@ class KernelSimulation implements Simulation {
 			}[] = [];
 			const handled = new Set<EntityId>();
 			for (const slot of this.executorSlots) {
-				const owned = new Set(this.world.ids(slot.executor.entity));
+				const { executor } = slot;
+				const owned = new Set(
+					this.world
+						.ids(executor.entity)
+						.filter((id) => executor.owns?.(this.world, id) ?? true),
+				);
 				const ids = Object.entries(activation.agents)
 					.filter(([id, mode]) => mode !== "manual" && owned.has(toEntityId(id)))
 					.map(([id]) => toEntityId(id));
@@ -1123,7 +1129,9 @@ export const createSimulation = (
 ): Result<Simulation, FailureInfo> => {
 	const runId = makeRunId(scenario.scenarioId, scenario.replicationId);
 	const logger = deps.logger.child({ runId });
-	const effective = resolvedScenario(scenario, deps);
+	const resolved = resolveScenarioParams(resolvedScenario(scenario, deps));
+	if (!resolved.ok) return instantiateError("ParamResolve", describeParamError(resolved.error));
+	const effective = resolved.value;
 	const world = createWorld();
 	const rootRng = rngFromSeed(effective.seed, effective.seedPath);
 	const failureSink: { handle: (failure: LLMFailure) => void } = { handle: () => {} };

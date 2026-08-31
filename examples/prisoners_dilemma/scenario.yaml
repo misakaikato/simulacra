@@ -1,0 +1,77 @@
+scenarioId: prisoners_dilemma
+seed: 1
+params:
+    opponent: titForTat
+    framing: canonical
+population:
+    n: 2
+    fields:
+        - name: name
+          dtype: str
+          sampling: { kind: choice, choices: [Alice, Bob] }
+        - name: role
+          dtype: str
+          sampling: { kind: choice, choices: [player, opponent] }
+    stratify:
+        name: { Alice: 1, Bob: 1 }
+        role: { player: 1, opponent: 1 }
+modules:
+    - kind: pd
+executors:
+    - kind: focal
+      name: player
+      options:
+          provider: player
+          where: { persona.role: player }
+          components:
+              - kind: persona
+              - kind: instructions
+                options:
+                    text:
+                        $param: framing
+                        map:
+                            canonical: >-
+                                You are playing a repeated prisoner's dilemma against the same opponent
+                                for ten rounds. Each round both of you choose to cooperate or defect.
+                                Payoffs per round: both cooperate 3 and 3; you cooperate and they defect
+                                0 and 5; you defect and they cooperate 5 and 0; both defect 1 and 1.
+                                Maximise your total payoff over all rounds.
+                            moralized: >-
+                                You are playing a repeated prisoner's dilemma against the same opponent
+                                for ten rounds. Each round both of you choose to cooperate or defect.
+                                Payoffs per round: both cooperate 3 and 3; you cooperate and they defect
+                                0 and 5; you defect and they cooperate 5 and 0; both defect 1 and 1.
+                                Cooperating is the honest and considerate choice; defecting betrays your
+                                partner's trust. Choose as a fair-minded person would.
+                            risk: >-
+                                You are playing a repeated prisoner's dilemma against the same opponent
+                                for ten rounds. Each round both of you choose to cooperate or defect.
+                                Payoffs per round: both cooperate 3 and 3; you cooperate and they defect
+                                0 and 5; you defect and they cooperate 5 and 0; both defect 1 and 1.
+                                Defecting never leaves you worse off within a single round, but mutual
+                                defection is the worst joint outcome over time. Weigh the risk before you choose.
+              - kind: recentMemory
+                options: { k: 4 }
+    - kind: focal
+      name: opponent
+      options:
+          provider: opponent
+          where: { persona.role: opponent }
+          components:
+              - kind: persona
+providers:
+    player:
+        kind: llm
+    opponent:
+        kind: pdRule
+        options:
+            strategy: { $param: opponent }
+policy:
+    kind: allAgents
+instruments:
+    - { kind: cooperationRate, every: 1 }
+    - { kind: averagePayoff, every: 1 }
+steps:
+    - { kind: run, ticks: 10 }
+llm:
+    budget: { maxCalls: 40, maxCompletionTokens: 200 }

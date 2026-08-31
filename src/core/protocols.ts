@@ -161,6 +161,7 @@ export interface Executor {
 	readonly entity: string;
 	readonly provider: string;
 	declare(world: World): Result<void, DeclareError>;
+	owns?(world: WorldView, id: EntityId): boolean;
 	observe(
 		world: WorldView,
 		ids: readonly EntityId[],
