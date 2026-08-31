@@ -59,7 +59,13 @@ export const compareEvents = (a: Event, b: Event): -1 | 0 | 1 => {
 	return 0;
 };
 
-export const canonicalEvent = (e: Event): string => canonicalJson(e);
+const digestible = (e: Event): Event => {
+	if (e.kind !== "failure" || e.payload.stack === undefined) return e;
+	const { stack: _stack, ...payload } = e.payload;
+	return { ...e, payload };
+};
+
+export const canonicalEvent = (e: Event): string => canonicalJson(digestible(e));
 
 export const digestEvents = (sorted: Iterable<Event>): string => {
 	const hasher = new Bun.CryptoHasher("sha256");

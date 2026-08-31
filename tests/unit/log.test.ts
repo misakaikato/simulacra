@@ -272,3 +272,37 @@ describe("tick batches", () => {
 		reopened.close();
 	});
 });
+
+describe("digest and failure stacks", () => {
+	test("stack traces are kept on failure events but excluded from the digest", () => {
+		const build = (stack: string) => {
+			const log = createMemoryEventLog();
+			log.append(
+				makeEvent(
+					{
+						eventId: toEventId("01ARZ3NDEKTSV4RRFFQ69G5FAV"),
+						runId: makeRunId("d", 0),
+						t: timeAt(0, 1, 1),
+						seedPath: [0],
+					},
+					{
+						kind: "failure",
+						payload: {
+							stage: "resolve",
+							excType: "ActionRejected",
+							message: "unknown post",
+							stack,
+							retryable: false,
+						},
+					},
+				),
+			);
+			return log;
+		};
+		const a = build("Error: x\n    at a (file.ts:1:1)");
+		const b = build("Error: x\n    at b (other.ts:9:9)");
+		expect(a.digest()).toBe(b.digest());
+		const stored = a.query({ kind: ["failure"] })[0];
+		expect(stored?.kind === "failure" && stored.payload.stack).toContain("file.ts");
+	});
+});
