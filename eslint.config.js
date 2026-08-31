@@ -3,7 +3,7 @@ import tseslint from "typescript-eslint";
 
 export default tseslint.config(
 	{
-		ignores: ["node_modules/", "dist/", "gui/dist/", "simulacra-data/"],
+		ignores: ["node_modules/", "dist/", "gui/dist/", "simulacra-data/", ".claude/worktrees/"],
 	},
 	js.configs.recommended,
 	...tseslint.configs.recommended,
