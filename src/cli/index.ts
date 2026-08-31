@@ -1,11 +1,13 @@
 #!/usr/bin/env bun
 import { defineCommand, runCommand, runMain } from "citty";
 import { version } from "../index";
+import { auditCommand } from "./commands/audit";
 import { digestCommand } from "./commands/digest";
 import { doctorCommand } from "./commands/doctor";
 import { examplesCommand } from "./commands/examples";
 import { inspectCommand } from "./commands/inspect";
 import { replayCommand } from "./commands/replay";
+import { reportCommand } from "./commands/report";
 import { resumeCommand } from "./commands/resume";
 import { runCommand as runScenarioCommand } from "./commands/run";
 import { pluginPathsOf, wantsDebug } from "./commands/shared";
@@ -16,6 +18,8 @@ const subCommands = {
 	resume: resumeCommand,
 	inspect: inspectCommand,
 	digest: digestCommand,
+	audit: auditCommand,
+	report: reportCommand,
 	doctor: doctorCommand,
 	examples: examplesCommand,
 };
