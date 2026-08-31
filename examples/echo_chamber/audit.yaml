@@ -1,0 +1,36 @@
+baseScenario: ./scenario.yaml
+design: one_at_a_time
+replications: 30
+claimType: exploratory
+metrics: [stanceAssortativity, sameGroupRatio]
+axes:
+    - id: homophily
+      level: meso
+      kind: design
+      dimension: environment structure
+      target: params.homophily
+      levels: [low, medium, high]
+    - id: hub
+      level: meso
+      kind: design
+      dimension: environment structure
+      target: params.hub
+      levels: [anti, pro, mixed, random]
+    - id: activation
+      level: meso
+      kind: design
+      dimension: interaction protocol
+      target: params.activation
+      levels: [0.3, 0.5]
+    - id: memoryWindow
+      level: micro
+      kind: design
+      dimension: memory and temporality
+      target: params.memoryWindow
+      levels: [2, 4]
+    - id: feedSize
+      level: meso
+      kind: design
+      dimension: environment structure
+      target: params.feedSize
+      levels: [5, 10]

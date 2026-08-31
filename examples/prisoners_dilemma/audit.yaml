@@ -1,0 +1,37 @@
+baseScenario: ./scenario.yaml
+design: one_at_a_time
+replications: 30
+claimType: mechanism
+metrics: [cooperationRate, averagePayoff]
+hypothesis:
+    id: pd-framing
+    claim: >-
+        Against a tit-for-tat opponent, the LLM player's cooperation rate depends on how the
+        same payoff structure is framed, and that dependence survives changes in how the
+        persona and the memory are written down.
+    claimType: mechanism
+    arms:
+        - { name: canonical, role: control, overrides: { framing: canonical } }
+        - { name: moralized, role: treatment, overrides: { framing: moralized } }
+    outcomes:
+        - { name: cooperation, metric: cooperationRate, direction: increase }
+        - { name: payoff, metric: averagePayoff, direction: any }
+axes:
+    - id: personaFormat
+      level: micro
+      kind: representation
+      dimension: representational format
+      target: prompt.personaFormat
+      levels: [plain, bullets, table]
+    - id: framing
+      level: micro
+      kind: representation
+      dimension: linguistic framing
+      target: params.framing
+      levels: [canonical, moralized, risk]
+    - id: memoryRepresentation
+      level: micro
+      kind: representation
+      dimension: context representation
+      target: prompt.memoryRepresentation
+      levels: [transcript, json, bullets]
