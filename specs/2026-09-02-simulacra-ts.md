@@ -791,3 +791,8 @@ simulacra/
 - 结构化回退那一次 400 不计入重试次数。
 - 接口增项：`LLMSpec.sendSeed`（默认 true，`mlxLm` 预设为 false）；`ProviderFailure.excType?`；`rng.keyFromLabel(label)` 供插件按标签派生路径；检查点新增 `modules.json`；`Component.consolidate?()` 异步整理钩子（`preAct/postAct` 同步）；`LLMGateway.failures()` 与 `ledgerByPurpose()`；`PluginContext.gateway?`。
 - recentMemory 对 observation 条目只给占位摘要（payload 只有 sha），decision 条目含动作、参数与 rationale 前 200 字。
+- 每个 run 恰好一个网关：`createSimulation`/`runScenario` 的 deps 必须提供 `createGateway(spec, { logger, onFailure })` 工厂（类型上必填），Simulation 用它创建唯一网关并放入 `PluginContext.gateway`；提供者与组件禁止自建网关，缺席时 llm 提供者返回 `gateway_missing` 失败。公共入口 `src/index.ts` 负责注入 `llm/gateway.ts` 的工厂。
+- 网关层失败必须进入事件日志：Simulation 通过 `onFailure` 回调把 `structured_fallback`、`budget_exhausted`、`CircuitOpen`、`ReplayMiss` 等网关失败写成 `failure` 事件（`stage: "llm"`，`retryable` 按失败对象），并计入 `integrity.llmFailures`，同时 error 级日志。
+- 预算只对真正发出的网络请求计数：replay 命中、断路后的即时失败、预算耗尽的拒绝都不消耗 `maxCalls`。
+- 断路器计数的是"最终失败"（含重试耗尽的 429/5xx/网络错误），措辞以此为准。
+- `llm_call` 事件的 `params` 记录实际使用的结构化模式（`json_schema` 或 `prompt`）。
