@@ -210,7 +210,7 @@ describe("socialGraph module", () => {
 		expect(sim.world.count(EDGE_ENTITY)).toBe(90);
 		const graph = sim.log.query({ kind: ["module_step"] });
 		expect(graph).toHaveLength(1);
-		expect(graph[0]?.t).toEqual(timeAt(0, 0, 1));
+		expect(graph[0]?.t).toEqual(timeAt(0, 0, 0));
 		expect(graph[0]?.kind === "module_step" && graph[0].payload.module).toBe("socialGraph");
 		const kinds = sim.world.column<string>(EDGE_ENTITY, EDGE_COLUMNS.kind).toArray();
 		expect(kinds.every((k) => k === "follow")).toBe(true);

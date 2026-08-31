@@ -1,5 +1,5 @@
 import { existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import {
 	createLogger,
 	levelFromEnv,
@@ -8,11 +8,13 @@ import {
 	type LogSink,
 } from "../logging/logger";
 import { jsonlSink } from "../logging/sinks";
-import { saveCheckpoint } from "./checkpoint";
+import { loadCheckpoint, saveCheckpoint, type CheckpointState } from "./checkpoint";
 import { FAILURE_TYPES } from "./failures";
-import { makeRunId } from "./ids";
-import type { Registry } from "./protocols";
+import { ZERO_EVENT_ID, makeRunId } from "./ids";
+import type { EventLog, Registry } from "./protocols";
 import { err, ok } from "./result";
+import { CHECKPOINTS_DIR, openRunLog, readRunScenario, writeRunScenario } from "./runDir";
+import { scenarioHash } from "./scenario";
 import {
 	IncompleteTick,
 	createSimulation,
@@ -20,6 +22,7 @@ import {
 	type Simulation,
 } from "./simulation";
 import type {
+	EventId,
 	FailureInfo,
 	JsonValue,
 	ProviderSpec,
@@ -29,9 +32,10 @@ import type {
 	Step,
 } from "./types";
 
+export { CHECKPOINTS_DIR } from "./runDir";
+
 export const RESULT_FILE = "result.json";
 export const LOG_FILE = "log.jsonl";
-export const CHECKPOINTS_DIR = "checkpoints";
 
 export interface RunOptions {
 	readonly overwrite?: boolean;
@@ -41,7 +45,10 @@ export interface RunOptions {
 	readonly sinks?: readonly LogSink[];
 	readonly createGateway: GatewayFactory;
 	readonly baseDir?: string;
+	readonly checkpointEvery?: number;
 }
+
+export type ResumeOptions = Omit<RunOptions, "ticksOverride" | "providerOverride">;
 
 export const withProviderOverride = (scenario: Scenario, kind: string): Scenario => {
 	const providers: Record<string, ProviderSpec> = {};
@@ -103,6 +110,26 @@ const splitMeasurements = (
 	return { metrics, distributions };
 };
 
+export const remainingSteps = (steps: readonly Step[], tick: number): readonly Step[] => {
+	const out: Step[] = [];
+	let consumed = 0;
+	let started = false;
+	for (const step of steps) {
+		if (started) {
+			out.push(step);
+			continue;
+		}
+		if (step.kind !== "run") continue;
+		if (consumed + step.ticks <= tick) {
+			consumed += step.ticks;
+			continue;
+		}
+		started = true;
+		out.push({ kind: "run", ticks: consumed + step.ticks - tick });
+	}
+	return out;
+};
+
 const checkpoint = (sim: Simulation, outDir: string, logger: Logger): void => {
 	const tick = sim.clock.now.tick;
 	const relative = join(CHECKPOINTS_DIR, String(tick));
@@ -151,14 +178,25 @@ const executeSteps = async (
 	sim: Simulation,
 	outDir: string,
 	logger: Logger,
+	steps: readonly Step[],
+	checkpointEvery: number | undefined,
 ): Promise<FailureInfo | undefined> => {
-	checkpoint(sim, outDir, logger);
-	for (const [index, step] of sim.scenario.steps.entries()) {
+	let lastCheckpointTick = -1;
+	const writeCheckpoint = (): void => {
+		const tick = sim.clock.now.tick;
+		if (tick === lastCheckpointTick) return;
+		lastCheckpointTick = tick;
+		checkpoint(sim, outDir, logger);
+	};
+	writeCheckpoint();
+	for (const [index, step] of steps.entries()) {
 		switch (step.kind) {
 			case "run":
 				for (let k = 0; k < step.ticks; k += 1) {
 					const r = await sim.step();
 					if (!r.ok) return r.error;
+					if (checkpointEvery !== undefined && sim.clock.now.tick % checkpointEvery === 0)
+						writeCheckpoint();
 				}
 				break;
 			case "intervene":
@@ -182,38 +220,42 @@ const executeSteps = async (
 				notImplemented(sim, logger, "questionnaire", `questionnaire '${step.name}'`);
 				break;
 			case "checkpoint":
-				checkpoint(sim, outDir, logger);
+				writeCheckpoint();
 				break;
 		}
 	}
 	return undefined;
 };
 
-export const runScenario = async (
-	scenario: Scenario,
+interface Drive {
+	readonly scenario: Scenario;
+	readonly steps: readonly Step[];
+	readonly resumeFrom?: CheckpointState;
+	readonly beforeSteps?: (sim: Simulation) => void;
+}
+
+const drive = async (
+	drive: Drive,
 	registry: Registry,
 	outDir: string,
 	opts: RunOptions,
 ): Promise<Result<RunResult, FailureInfo>> => {
 	const prepared = prepareOutDir(outDir, opts.overwrite ?? false);
 	if (!prepared.ok) return prepared;
+	const { scenario, steps } = drive;
+	writeRunScenario(outDir, scenario);
 	const logPath = join(outDir, LOG_FILE);
 	const fileSink = jsonlSink(logPath);
 	const logger = createLogger({
 		level: opts.logLevel ?? levelFromEnv(),
 		sinks: [fileSink, ...(opts.sinks ?? [])],
 	});
-	let effective = scenario;
-	if (opts.providerOverride !== undefined)
-		effective = withProviderOverride(effective, opts.providerOverride);
-	if (opts.ticksOverride !== undefined)
-		effective = withTicksOverride(effective, opts.ticksOverride);
-
-	const created = createSimulation(effective, registry, {
+	const created = createSimulation(scenario, registry, {
 		outDir,
 		logger,
 		createGateway: opts.createGateway,
 		...(opts.baseDir === undefined ? {} : { baseDir: opts.baseDir }),
+		...(drive.resumeFrom === undefined ? {} : { resumeFrom: drive.resumeFrom }),
 	});
 	const finish = (result: RunResult): Result<RunResult, FailureInfo> => {
 		writeFileSync(join(outDir, RESULT_FILE), JSON.stringify(result, null, "\t"));
@@ -231,9 +273,9 @@ export const runScenario = async (
 			message: created.error.message,
 		});
 		return finish({
-			runId: makeRunId(effective.scenarioId, effective.replicationId),
+			runId: makeRunId(scenario.scenarioId, scenario.replicationId),
 			scenarioHash: "",
-			seed: effective.seed,
+			seed: scenario.seed,
 			status: "failed",
 			failure: created.error,
 			metrics: {},
@@ -255,7 +297,11 @@ export const runScenario = async (
 	const sim = created.value;
 	let failure: FailureInfo | undefined;
 	try {
-		failure = await executeSteps(sim, outDir, sim.logger);
+		drive.beforeSteps?.(sim);
+		const initialized = await sim.initialize();
+		failure = initialized.ok
+			? await executeSteps(sim, outDir, sim.logger, steps, opts.checkpointEvery)
+			: initialized.error;
 	} catch (e) {
 		failure = describeError(e, sim.clock.now);
 		sim.logger.error(e instanceof IncompleteTick ? "incomplete tick" : "run aborted", {
@@ -278,4 +324,80 @@ export const runScenario = async (
 		cost,
 		logPath,
 	});
+};
+
+export const runScenario = async (
+	scenario: Scenario,
+	registry: Registry,
+	outDir: string,
+	opts: RunOptions,
+): Promise<Result<RunResult, FailureInfo>> => {
+	let effective = scenario;
+	if (opts.providerOverride !== undefined)
+		effective = withProviderOverride(effective, opts.providerOverride);
+	if (opts.ticksOverride !== undefined)
+		effective = withTicksOverride(effective, opts.ticksOverride);
+	return drive({ scenario: effective, steps: effective.steps }, registry, outDir, opts);
+};
+
+const instantiateFailure = (excType: string, message: string): FailureInfo => ({
+	stage: "instantiate",
+	excType,
+	message,
+	stack: "",
+});
+
+const copyHistory = (source: EventLog, target: EventLog, upTo: EventId, tick: number): void => {
+	target.beginTick();
+	try {
+		for (const row of source.sql<{ readonly sha: string; readonly text: string }>(
+			"SELECT sha, text FROM content",
+		))
+			target.putContent(row.text);
+		if (upTo === ZERO_EVENT_ID) return;
+		for (const e of source.query({ toTick: tick })) {
+			target.append(e);
+			if (e.eventId === upTo) break;
+		}
+	} finally {
+		target.endTick();
+	}
+};
+
+export const resumeRun = async (
+	checkpointDir: string,
+	ticks: number,
+	registry: Registry,
+	outDir: string,
+	opts: ResumeOptions,
+): Promise<Result<RunResult, FailureInfo>> => {
+	const runDir = dirname(dirname(resolve(checkpointDir)));
+	const scenario = readRunScenario(runDir);
+	if (!scenario.ok) return err(instantiateFailure("RunDirUnreadable", scenario.error));
+	const checkpoint = loadCheckpoint(checkpointDir, scenarioHash(scenario.value));
+	if (!checkpoint.ok)
+		return err(instantiateFailure(checkpoint.error.kind, checkpoint.error.message));
+	const source = openRunLog(runDir);
+	if (!source.ok) return err(instantiateFailure("RunDirUnreadable", source.error));
+	const tick = checkpoint.value.clock.now.tick;
+	const steps = withTicksOverride(
+		{ ...scenario.value, steps: remainingSteps(scenario.value.steps, tick) },
+		ticks,
+	).steps;
+	try {
+		return await drive(
+			{
+				scenario: scenario.value,
+				steps,
+				resumeFrom: checkpoint.value,
+				beforeSteps: (sim) =>
+					copyHistory(source.value, sim.log, checkpoint.value.lastEventId, tick),
+			},
+			registry,
+			outDir,
+			opts,
+		);
+	} finally {
+		source.value.close();
+	}
 };
