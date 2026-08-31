@@ -11,6 +11,13 @@ import type { ActionCall, JsonObject, JsonValue, Result } from "./types";
 
 export const defineAction = <P extends z.ZodType>(def: ActionDef<P>): ActionDef<P> => def;
 
+export class ActionRejected extends Error {
+	constructor(message: string) {
+		super(message);
+		this.name = "ActionRejected";
+	}
+}
+
 const withDescription = (schema: z.ZodType, node: JsonObject): JsonObject =>
 	schema.description === undefined ? node : { ...node, description: schema.description };
 

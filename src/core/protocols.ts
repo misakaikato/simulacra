@@ -309,6 +309,7 @@ export interface Module {
 		t: LogicalTime,
 	): Readonly<Record<EntityId, JsonValue>>;
 	step(view: WorldView, t: LogicalTime, rng: Rng): Promise<readonly Effect[]>;
+	initialize?(world: WorldView, rng: Rng): Promise<readonly Effect[]>;
 	graph?(): GraphView;
 	getState(): JsonValue;
 	setState(s: JsonValue): void;

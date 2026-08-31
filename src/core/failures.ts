@@ -22,6 +22,7 @@ export const FAILURE_TYPES = {
 	noFallbackAction: "no_fallback_action",
 	effectRejected: "effect_rejected",
 	moduleStepFailed: "module_step_failed",
+	moduleInitializeFailed: "module_initialize_failed",
 	memorySummaryFailed: "memory_summary_failed",
 	notImplemented: "not_implemented",
 	consecutiveBatchFailures: "consecutive_batch_failures",
