@@ -866,3 +866,17 @@ simulacra/
 - 审计自动 id 不含 provider，同计划换 provider 需显式 `name`。
 - `serve` 固定绑定 `127.0.0.1`，`--port 0` 可用并打印实际地址。
 - 空成对检验表按真实原因提示：无扰动条件 / 无指标 / 可用复制不足 2。
+
+## 附录 H：C 阶段裁定的细节
+
+- `population.n` 支持 `{ $param }` 引用，在 `ScenarioSchema` 的 transform 里解析（解析时刻），`Scenario` 类型不变；解析后再覆盖 `params.n` 不重新派生，harness 轴直接指向 `population.n`。
+- `Executor.fallbackAction?`：Cohort 执行体的回退动作，默认取 `virtualActions` 末项；`Executor.resolvesOwnActions` 为 true 时 Simulation 跳过 registry 校验与 resolve。
+- `Transition.apply` 第 5 个可选参数 `graph?: GraphView`；`opinionDynamics` 只更新本批激活的 agent，邻居均值取本轮发帖的关注对象。
+- `PluginContext.provider(name)` 解析器由 `createSimulation` 提供，记忆化并在装配期检测循环。
+- archetype 的每次代表调用写一条无 `agentId` 的 `observation` 事件（provenance `prototype`，parent 指向组内首个观察，refs 为成员观察），成本记在组内首个成员的 Decision。
+- APS 默认参数按 N ≥ 5000 设计；小 N 测试用 `alphaB: 0.08, gamma: 0.02`；`tau` 为选项默认 0.1；`audit()` 以 `reportedDistribution.<action>` 扁平键给出分布，结构化走 `ApsProvider.report()`。
+- 问卷 `entersMemory: false` 时 interview 的 observation/decision 事件不带 `agentId` 且跳过 `after()`；measurement 事件带 `agentId` 与 `parent`。
+- 干预与问卷事件记在 tick 边界 `(tick, 0, 0)` 且不消耗 seq；`assertComplete` 只统计 substep > 0 的事件；`run → intervene → checkpoint` 合法。
+- 热配置：`ctx.scenario` 为活引用；intervene 逐键覆盖 `params.*`、`prompt.*`、`policy.options.*`，其它键记 `override_not_hot` 并回退；策略每次重建，`$param` 驱动的执行体 options 变化时重建执行体并转移状态。已知局限：`resume` 跳过检查点之后的 intervene/questionnaire 步骤。
+- 注册表新增 `transitions` 与 `instruments` 槽；`bench/kernel.ts` 输出目录用系统临时目录并清理；`tsconfig.json` include 加 `bench`。
+- mock 提供者对注册表外的虚拟动作返回无参决策。
