@@ -2,6 +2,7 @@ import { join, resolve } from "node:path";
 import type { Logger } from "../logging/logger";
 import { z } from "zod";
 import { ActionRejected } from "./actions";
+import { observableLog, type EventHandler } from "./bus";
 import type { CheckpointInput, CheckpointState } from "./checkpoint";
 import { createClock } from "./clock";
 import { makeEvent, type EventInit } from "./events";
@@ -88,6 +89,7 @@ export interface SimulationDeps {
 	readonly logger: Logger;
 	readonly createGateway: GatewayFactory;
 	readonly log?: EventLog;
+	readonly onEvent?: EventHandler;
 	readonly baseDir?: string;
 	readonly resumeFrom?: CheckpointState;
 }
@@ -1325,7 +1327,8 @@ export const createSimulation = (
 		providers: [...providers.keys()],
 		policy: policy.value.name,
 	});
-	const log = deps.log ?? openSqliteEventLog(eventLogPath(deps.outDir));
+	const stored = deps.log ?? openSqliteEventLog(eventLogPath(deps.outDir));
+	const log = deps.onEvent === undefined ? stored : observableLog(stored, deps.onEvent);
 	const simulation = new KernelSimulation({
 		runId,
 		scenario: effective,

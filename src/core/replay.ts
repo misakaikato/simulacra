@@ -1,6 +1,6 @@
 import { loadCheckpoint } from "./checkpoint";
 import { ZERO_EVENT_ID } from "./ids";
-import type { EventLog, World } from "./protocols";
+import type { EventLog, World, WorldView } from "./protocols";
 import { applyEffects } from "./resolver";
 import { err, ok } from "./result";
 import { checkpointDirOf, checkpointTicks, readRunScenario, withRunLog } from "./runDir";
@@ -12,6 +12,10 @@ export interface ReplayResult {
 	readonly tick: number;
 	readonly fromTick: number;
 	readonly folded: number;
+}
+
+export interface ReplayedWorld extends ReplayResult {
+	readonly world: WorldView;
 }
 
 const EFFECT_OPS: readonly string[] = [
@@ -67,7 +71,7 @@ export const replayEvents = (
 	};
 };
 
-export const replayRun = (runDir: string, toTick?: number): Result<ReplayResult, string> => {
+export const replayWorld = (runDir: string, toTick?: number): Result<ReplayedWorld, string> => {
 	if (toTick !== undefined && (!Number.isInteger(toTick) || toTick < 0))
 		return err(`toTick must be a non-negative integer, got ${toTick}`);
 	const scenario = readRunScenario(runDir);
@@ -81,7 +85,18 @@ export const replayRun = (runDir: string, toTick?: number): Result<ReplayResult,
 		);
 	const checkpoint = loadCheckpoint(checkpointDirOf(runDir, start), scenarioHash(scenario.value));
 	if (!checkpoint.ok) return err(`tick ${start} checkpoint: ${checkpoint.error.message}`);
+	const world = checkpoint.value.world;
 	return withRunLog(runDir, (log) =>
-		ok(replayEvents(log, checkpoint.value.world, checkpoint.value.lastEventId, start, toTick)),
+		ok({
+			...replayEvents(log, world, checkpoint.value.lastEventId, start, toTick),
+			world,
+		}),
 	);
+};
+
+export const replayRun = (runDir: string, toTick?: number): Result<ReplayResult, string> => {
+	const replayed = replayWorld(runDir, toTick);
+	if (!replayed.ok) return replayed;
+	const { world: _world, ...result } = replayed.value;
+	return ok(result);
 };

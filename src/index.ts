@@ -6,7 +6,12 @@ import { registerBuiltinExecutors } from "./agents";
 import { inspectRun, type InspectQuery, type InspectResult } from "./core/inspect";
 import type { Registry } from "./core/protocols";
 import { createRegistry } from "./core/registry";
-import { replayRun, type ReplayResult } from "./core/replay";
+import {
+	replayRun,
+	replayWorld as coreReplayWorld,
+	type ReplayResult,
+	type ReplayedWorld,
+} from "./core/replay";
 import {
 	resumeRun as coreResumeRun,
 	runScenario as coreRunScenario,
@@ -98,7 +103,11 @@ export type {
 	Scenario,
 } from "./core/types";
 export type { InspectQuery, InspectResult } from "./core/inspect";
-export type { ReplayResult } from "./core/replay";
+export { describeEffect, renderInspect } from "./core/inspect";
+export type { ReplayResult, ReplayedWorld } from "./core/replay";
+export type { EventHandler } from "./core/bus";
+export { observableLog } from "./core/bus";
+export { EVENT_KINDS, isEventKind } from "./core/events";
 export type { ScenarioIssue } from "./core/scenario";
 export type { Logger, LogLevel, LogRecord, LogSink } from "./logging/logger";
 export { createLogger, isLogLevel, levelFromEnv, silentLogger } from "./logging/logger";
@@ -118,7 +127,15 @@ export { PROBE_MAX_CALLS, probeEndpoint } from "./llm/probe";
 export { EXAMPLES_DIR, copyExample, examplePath, listExamples } from "./examples";
 export { ActionRejected, defineAction, zodToJsonSchema } from "./core/actions";
 export { loadCheckpoint, saveCheckpoint } from "./core/checkpoint";
-export { ZERO_EVENT_ID, newEntityId, newEventId, toEntityId, toEventId } from "./core/ids";
+export {
+	ZERO_EVENT_ID,
+	makeRunId,
+	newEntityId,
+	newEventId,
+	toEntityId,
+	toEventId,
+	toRunId,
+} from "./core/ids";
 export { parseOptions } from "./core/registry";
 export { andThen, collect, err, map, mapErr, ok, partition, unwrapOr } from "./core/result";
 export { keyFromLabel, rngFromSeed } from "./core/rng";
@@ -126,6 +143,7 @@ export { AGENT_ENTITY, ORDINAL_COLUMN, PERSONA_PREFIX } from "./core/population"
 export {
 	overrideScenario,
 	parseScenario,
+	parseScenarioYaml,
 	resolveScenarioPlugins,
 	scenarioHash,
 	spawnReplications,
@@ -156,7 +174,15 @@ export {
 	modelsOf,
 } from "./harness/conditions";
 export { LOG_FILE, RESULT_FILE } from "./core/run";
-export { CHECKPOINTS_DIR, SCENARIO_FILE } from "./core/runDir";
+export {
+	CHECKPOINTS_DIR,
+	SCENARIO_FILE,
+	checkpointTicks,
+	openRunLog,
+	readRunScenario,
+	withRunLog,
+} from "./core/runDir";
+export { EDGE_COLUMNS, EDGE_ENTITY, FOLLOW_KIND } from "./modules";
 export { createRuleProvider, type RuleFn } from "./providers/rule";
 export { createMockProvider } from "./providers/mock";
 export { registerBuiltinModules } from "./modules";
@@ -310,6 +336,9 @@ export const kernelRunFn =
 
 export const replay = (runDir: string, toTick?: number): Result<ReplayResult, string> =>
 	replayRun(runDir, toTick);
+
+export const replayWorld = (runDir: string, toTick?: number): Result<ReplayedWorld, string> =>
+	coreReplayWorld(runDir, toTick);
 
 export const inspect = (runDir: string, query: InspectQuery): Result<InspectResult, string> =>
 	inspectRun(runDir, query);
