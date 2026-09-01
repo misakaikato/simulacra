@@ -760,7 +760,24 @@ const buildPdAudit = (): { readonly plan: AuditPlan; readonly report: AuditRepor
 		.sort((a, b) => b[1] - a[1]);
 	const report: AuditReport = {
 		planHash: fakeSha("prisoners_dilemma-audit"),
+		plan: {
+			scenarioId: plan.base.scenarioId,
+			design: plan.design,
+			replications: plan.replications,
+			models: plan.models,
+			metrics: plan.metrics,
+			claimType: plan.claimType,
+			axes: plan.axes,
+		},
+		options: { includeIncomplete: false, bootstrapIters: 2000, providerOverride: "mock" },
 		conditions,
+		runIndex: conditions.flatMap((c) =>
+			Array.from({ length: plan.replications }, (_, i) => ({
+				conditionId: c.conditionId,
+				replicationId: i,
+				dir: `runs/${c.conditionId}/${i}`,
+			})),
+		),
 		runs,
 		pairwise,
 		directionConsistency: { cooperationRate: 0.83, averagePayoff: 0.67 },
