@@ -234,6 +234,8 @@ export {
 export * as stats from "./harness/stats";
 export type { AppOptions } from "./api/app";
 export { GUI_DIST_DIR, createApp } from "./api/app";
+export type { McpServerOptions } from "./mcp/server";
+export { AUDIT_REPORT_TEMPLATE, RUN_RESULT_TEMPLATE, createMcpServer } from "./mcp/server";
 export type {
 	AuditMessage,
 	AuditProgress,

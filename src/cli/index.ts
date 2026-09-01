@@ -7,6 +7,7 @@ import { doctorCommand } from "./commands/doctor";
 import { examplesCommand } from "./commands/examples";
 import { importOasisCommand } from "./commands/importOasis";
 import { inspectCommand } from "./commands/inspect";
+import { mcpCommand } from "./commands/mcp";
 import { replayCommand } from "./commands/replay";
 import { reportCommand } from "./commands/report";
 import { resumeCommand } from "./commands/resume";
@@ -26,6 +27,7 @@ const subCommands = {
 	doctor: doctorCommand,
 	examples: examplesCommand,
 	serve: serveCommand,
+	mcp: mcpCommand,
 };
 
 const main = defineCommand({
