@@ -28,6 +28,9 @@ export const FAILURE_TYPES = {
 	consecutiveBatchFailures: "consecutive_batch_failures",
 	consecutiveModuleFailures: "consecutive_module_failures",
 	incompleteTick: "IncompleteTick",
+	missingColumn: "missing_column",
+	noFeatures: "no_features",
+	notFitted: "not_fitted",
 } as const;
 
 export type FailureType = (typeof FAILURE_TYPES)[keyof typeof FAILURE_TYPES];

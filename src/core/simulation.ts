@@ -23,6 +23,7 @@ import type {
 	Module,
 	ModuleObservations,
 	PluginContext,
+	PluginError,
 	Registry,
 	ResolveContext,
 	Rng,
@@ -1237,6 +1238,35 @@ class KernelSimulation implements Simulation {
 const instantiateError = (excType: string, message: string): Result<never, FailureInfo> =>
 	err(failureInfo("instantiate", excType, message));
 
+type ProviderResolveError =
+	| { readonly kind: "unknown"; readonly name: string }
+	| { readonly kind: "cycle"; readonly chain: readonly string[] }
+	| { readonly kind: "create"; readonly name: string; readonly error: PluginError };
+
+const describeProviderCycle = (chain: readonly string[]): string =>
+	`provider cycle: ${chain.join(" -> ")}`;
+
+const providerPluginError = (slot: string, e: ProviderResolveError): PluginError => {
+	switch (e.kind) {
+		case "unknown":
+			return {
+				reason: "construct_failed",
+				slot,
+				kind: e.name,
+				message: `unknown provider '${e.name}'`,
+			};
+		case "cycle":
+			return {
+				reason: "construct_failed",
+				slot,
+				kind: e.chain[e.chain.length - 1] ?? "",
+				message: describeProviderCycle(e.chain),
+			};
+		case "create":
+			return e.error;
+	}
+};
+
 const resolvedScenario = (scenario: Scenario, deps: SimulationDeps): Scenario => {
 	const baseDir = deps.baseDir ?? process.cwd();
 	const source = scenario.population.source;
@@ -1274,7 +1304,33 @@ export const createSimulation = (
 	} catch (e) {
 		return instantiateError("GatewayConfig", e instanceof Error ? e.message : String(e));
 	}
-	const ctx: PluginContext = { scenario: effective, registry, logger, gateway };
+	const providers = new Map<string, DecisionProvider>();
+	const constructing: string[] = [];
+	const resolveProvider = (name: string): Result<DecisionProvider, ProviderResolveError> => {
+		const existing = providers.get(name);
+		if (existing !== undefined) return ok(existing);
+		const spec = effective.providers[name];
+		if (spec === undefined) return err({ kind: "unknown", name });
+		if (constructing.includes(name))
+			return err({ kind: "cycle", chain: [...constructing, name] });
+		constructing.push(name);
+		const built = registry.providers.create({ ...spec, name: spec.name ?? name }, ctx);
+		constructing.pop();
+		if (!built.ok) return err({ kind: "create", name, error: built.error });
+		built.value.reset(effective.seedPath);
+		providers.set(name, built.value);
+		return ok(built.value);
+	};
+	const ctx: PluginContext = {
+		scenario: effective,
+		registry,
+		logger,
+		gateway,
+		provider: (name) => {
+			const r = resolveProvider(name);
+			return r.ok ? r : err(providerPluginError(registry.providers.slot, r.error));
+		},
+	};
 
 	const modules = new Map<string, Module>();
 	for (const spec of effective.modules) {
@@ -1323,7 +1379,6 @@ export const createSimulation = (
 			return instantiateError(population.error.kind, population.error.message);
 	}
 
-	const providers = new Map<string, DecisionProvider>();
 	const executors: ExecutorSlot[] = [];
 	for (const spec of effective.executors) {
 		const created = registry.executors.create(spec, ctx);
@@ -1339,28 +1394,25 @@ export const createSimulation = (
 				"ExecutorDeclare",
 				`executor '${executor.name}': ${JSON.stringify(declared.error)}`,
 			);
-		let provider = providers.get(executor.provider);
-		if (provider === undefined) {
-			const providerSpec = effective.providers[executor.provider];
-			if (providerSpec === undefined)
-				return instantiateError(
-					"UnknownProvider",
-					`executor '${executor.name}' refers to unknown provider '${executor.provider}'`,
-				);
-			const built = registry.providers.create(
-				{ ...providerSpec, name: providerSpec.name ?? executor.provider },
-				ctx,
-			);
-			if (!built.ok)
-				return instantiateError(
-					"ProviderCreate",
-					`provider '${executor.provider}': ${JSON.stringify(built.error)}`,
-				);
-			provider = built.value;
-			provider.reset(effective.seedPath);
-			providers.set(executor.provider, provider);
+		const provider = resolveProvider(executor.provider);
+		if (!provider.ok) {
+			const e = provider.error;
+			switch (e.kind) {
+				case "unknown":
+					return instantiateError(
+						"UnknownProvider",
+						`executor '${executor.name}' refers to unknown provider '${e.name}'`,
+					);
+				case "cycle":
+					return instantiateError("ProviderCycle", describeProviderCycle(e.chain));
+				case "create":
+					return instantiateError(
+						"ProviderCreate",
+						`provider '${e.name}': ${JSON.stringify(e.error)}`,
+					);
+			}
 		}
-		executors.push({ executor, provider, consecutiveBatchFailures: 0 });
+		executors.push({ executor, provider: provider.value, consecutiveBatchFailures: 0 });
 	}
 
 	const policy = registry.policies.create(effective.policy, ctx);

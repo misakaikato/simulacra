@@ -365,6 +365,9 @@ export interface PluginContext {
 	readonly registry: Registry;
 	readonly logger: Logger;
 	readonly gateway?: LLMGateway;
+	// Resolves a provider declared in the scenario by name; composite providers use it for
+	// their downstream. The simulation memoises instances and rejects cycles.
+	readonly provider?: (name: string) => Result<DecisionProvider, PluginError>;
 }
 
 export type PluginError =

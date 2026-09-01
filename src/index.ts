@@ -166,9 +166,40 @@ export {
 	type ThresholdRuleOptions,
 } from "./providers/rule";
 export { createMockProvider } from "./providers/mock";
+export {
+	ARCHETYPE_KIND,
+	ArchetypeOptionsSchema,
+	aggregateObservations,
+	createArchetypeProvider,
+	groupRequests,
+	majorityVote,
+	publicPersonaOf,
+	type ArchetypeProvider,
+	type ArchetypeProviderOptions,
+	type ArchetypeReport,
+} from "./providers/archetype";
+export {
+	SURROGATE_KIND,
+	SurrogateOptionsSchema,
+	createSurrogateProvider,
+	fitSoftmax,
+	predictProbabilities,
+	softmax,
+	type SoftmaxModel,
+	type SurrogateProvider,
+	type SurrogateProviderOptions,
+	type TraceEntry,
+} from "./providers/surrogate";
+export {
+	CACHE_KIND,
+	CacheOptionsSchema,
+	cacheKeyOf,
+	createCacheProvider,
+	type CacheProviderOptions,
+} from "./providers/cache";
 export { registerBuiltinModules } from "./modules";
 export { registerBuiltinMetrics } from "./metrics";
-export { COHORT_RULE_KIND, registerBuiltinProviders } from "./providers";
+export { COHORT_RULE_KIND, downstreamOf, registerBuiltinProviders } from "./providers";
 export { registerBuiltinPolicies } from "./policies";
 export type { Transition } from "./core/protocols";
 export {
