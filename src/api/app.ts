@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { Hono } from "hono";
 import { serveStatic } from "hono/bun";
@@ -55,10 +55,8 @@ export const createApp = (opts: AppOptions): Hono => {
 	app.route("/api/runs", runRoutes(deps));
 	app.route("/api/audits", auditRoutes(deps));
 
-	if (existsSync(join(guiDir, INDEX_HTML))) {
-		app.use("/*", serveStatic({ root: guiDir }));
-		app.get("/", (c) => c.html(readFileSync(join(guiDir, INDEX_HTML), "utf8")));
-	} else app.get("/", (c) => c.text(GUI_MISSING_NOTE));
+	if (existsSync(join(guiDir, INDEX_HTML))) app.use("/*", serveStatic({ root: guiDir }));
+	else app.get("/", (c) => c.text(GUI_MISSING_NOTE));
 
 	return app;
 };
