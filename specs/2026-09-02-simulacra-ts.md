@@ -818,3 +818,19 @@ simulacra/
 - Scenario 增加可选 `plugins: string[]`（相对场景文件所在目录的模块路径，模块导出 `register(registry)`），`loadScenario` 记录来源目录，`runScenario` 与 harness 装配前自动装载；CLI `--plugin` 为追加。审计示例 `examples/prisoners_dilemma/audit.yaml` 依赖此字段而非 `--plugin`。
 - `replay` 从不晚于目标 tick 的最早检查点开始折叠（续跑输出目录没有 tick 0 检查点时从其首个检查点起）。
 - 公共 API 新增模块：`src/llm/probe.ts`（`probeEndpoint`）、`src/doctor.ts`（`doctor` 返回 `Result<DoctorCheck[], string>`）、`src/examples.ts`（`listExamples/copyExample/examplePath`）、`src/plugins.ts`（`loadPlugins`，按绝对路径去重），均经 `src/index.ts` 导出。`replay` 结果含 `fromTick`。
+
+## 附录 D：HTTP API 响应契约（GUI 已按此实现，API 必须对齐）
+
+- `GET /api/runs` → `RunSummary[]`；`GET /api/runs/:id` → `RunSummary = { runId, progress: { tick, ticks, status: "running" | "succeeded" | "failed" }, agentCount, result?: RunResult }`。
+- `GET /api/examples` → `{ name, yaml }[]`。
+- `POST /api/runs` body `{ scenario: string（YAML 文本）| Scenario, seed: number, ticks?: number, provider?: "mock" | "llm" }` → `201 { runId }`；同 runId 已存在 `409`。
+- `GET /api/runs/:id/events?kind=a,b&agent&tick&fromTick&toTick&limit&offset` → `Event[]`（时间升序，默认 200 最大 1000）；`GET /api/runs/:id/events/:eventId/chain` → `Event[]`。
+- `GET /api/runs/:id/content/:sha` → `text/plain`。
+- `GET /api/runs/:id/agents` → `{ id, columns: Record<string, Scalar> }[]`，`columns` 含 `persona.*` 公开列与派生统计键 `decisions`、`failures`。
+- `GET /api/runs/:id/graph?tick` → `{ tick, edges: { src, dst, kind }[] }`（tick 省略或不可用时返回当前状态并回填实际 tick）。
+- `GET /api/runs/:id/metrics` → `Record<name, { tick, value: number }[]>`，只含数值 measurement。
+- `GET /api/runs/:id/stream` → SSE：`event: event` 的 data 为 Event JSON，`event: done` 表示结束；已结束的 run 按 tick 顺序回放后 `done`。
+- `GET /api/audits` → `AuditSummary[]`；`GET /api/audits/:id` → `AuditSummary = { auditId, progress: { completed, total, status }, plan?: AuditPlan, report?: AuditReport }`；`POST /api/audits` body `{ plan: string | AuditPlan, replications?, provider? }` → `201 { auditId }`；`GET /api/audits/:id/report.html`。
+- 错误体：校验失败 `400 { issues: [{ path, message }] }`；其它 `{ error: string }`。
+- 路径参数 URL 编码（runId 含冒号），服务端解码。
+- GUI 的 Runs 页同时列出 audits，因此 `GET /api/audits` 为必需。
