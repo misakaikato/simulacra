@@ -7,7 +7,7 @@ import type { RunFn } from "../../src/core/protocols";
 import { parseScenario, scenarioHash } from "../../src/core/scenario";
 import { AuditPlanSchema } from "../../src/core/schema";
 import type { AuditPlan, AuditReport, RunResult } from "../../src/core/types";
-import { renderReportHtml } from "../../src/harness/report";
+import { formatNumber, renderReportHtml } from "../../src/harness/report";
 import {
 	AUDIT_FILE,
 	PLAN_FILE,
@@ -291,6 +291,18 @@ describe("audit with a failing condition", () => {
 		);
 		expect(ordered).toEqual([3, 1, 2]);
 		expect(await runPool([], 4)).toEqual([]);
+	});
+
+	test("formatNumber hides floating-point noise and names non-finite values", () => {
+		expect(formatNumber(1.11e-16)).toBe("0");
+		expect(formatNumber(-1.66e-15)).toBe("0");
+		expect(formatNumber(1.5e-4)).toBe("1.50e-4");
+		expect(formatNumber(0.47)).toBe("0.4700");
+		expect(formatNumber(3)).toBe("3");
+		expect(formatNumber(Number.POSITIVE_INFINITY)).toBe("inf");
+		expect(formatNumber(Number.NEGATIVE_INFINITY)).toBe("-inf");
+		expect(formatNumber(Number.NaN)).toBe("n/a");
+		expect(formatNumber(null)).toBe("n/a");
 	});
 
 	test("condition directory names are file-system safe and unique", () => {
