@@ -15,6 +15,8 @@ import { ARCHETYPE_KIND, ArchetypeOptionsSchema, createArchetypeProvider } from 
 import { CACHE_KIND, CacheOptionsSchema, createCacheProvider } from "./cache";
 import { createLlmProvider } from "./llm";
 import { createMockProvider } from "./mock";
+import { APS_KIND, ApsOptionsSchema, createApsProvider } from "./routers/aps";
+import { TOPO_KIND, TopoOptionsSchema, createTopoProvider } from "./routers/topo";
 import { createRuleProvider, thresholdRule, type RuleFn } from "./rule";
 import { SURROGATE_KIND, SurrogateOptionsSchema, createSurrogateProvider } from "./surrogate";
 
@@ -194,6 +196,44 @@ export const registerBuiltinProviders = (
 								: { keyFields: o.value.keyFields }),
 						},
 						downstream.value,
+					),
+				);
+			},
+		],
+		[
+			TOPO_KIND,
+			(spec, ctx) => {
+				const o = parseOptions(providers.slot, spec, TopoOptionsSchema);
+				if (!o.ok) return o;
+				const downstream = downstreamOf(providers.slot, spec, ctx, o.value.downstream);
+				if (!downstream.ok) return downstream;
+				const { downstream: _name, stubbornnessColumn, ...rest } = o.value;
+				return ok(
+					createTopoProvider(
+						{
+							name: nameOf(spec),
+							...rest,
+							...(stubbornnessColumn === undefined ? {} : { stubbornnessColumn }),
+						},
+						downstream.value,
+						ctx.logger,
+					),
+				);
+			},
+		],
+		[
+			APS_KIND,
+			(spec, ctx) => {
+				const o = parseOptions(providers.slot, spec, ApsOptionsSchema);
+				if (!o.ok) return o;
+				const downstream = downstreamOf(providers.slot, spec, ctx, o.value.downstream);
+				if (!downstream.ok) return downstream;
+				const { downstream: _name, ...rest } = o.value;
+				return ok(
+					createApsProvider(
+						{ name: nameOf(spec), seed: ctx.scenario.seed, ...rest },
+						downstream.value,
+						ctx.logger,
 					),
 				);
 			},
