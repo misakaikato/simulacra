@@ -174,6 +174,16 @@ export interface Executor {
 	): Promise<readonly DecisionRequest[]>;
 	act(decisions: readonly Decision[], ctx: ResolveContext): Promise<readonly Effect[]>;
 	after(decisions: readonly Decision[], report: EffectReport, log: EventLog): Promise<void>;
+	// Questionnaire requests rendered with the executor's own components; executors without
+	// this hook are interviewed with a bare request built by the kernel.
+	interview?(
+		world: WorldView,
+		ids: readonly EntityId[],
+		t: LogicalTime,
+		log: EventLog,
+		rng: Rng,
+		questionnaire: Questionnaire,
+	): Promise<readonly DecisionRequest[]>;
 	getState(): JsonValue;
 	setState(s: JsonValue): void;
 }
@@ -337,14 +347,16 @@ export interface Metric {
 	compute(view: WorldView, log: EventLog, runId: RunId): number | readonly number[];
 }
 
+export interface Question {
+	readonly id: string;
+	readonly prompt: string;
+	readonly responseType: "text" | "integer" | "float" | "choice";
+	readonly choices?: readonly string[];
+}
+
 export interface Questionnaire {
 	readonly name: string;
-	readonly questions: readonly {
-		readonly id: string;
-		readonly prompt: string;
-		readonly responseType: "text" | "integer" | "float" | "choice";
-		readonly choices?: readonly string[];
-	}[];
+	readonly questions: readonly Question[];
 	readonly entersMemory: boolean;
 }
 
@@ -410,5 +422,6 @@ export interface Registry {
 	readonly providers: PluginRegistry<DecisionProvider>;
 	readonly policies: PluginRegistry<ActivationPolicy>;
 	readonly metrics: PluginRegistry<Metric>;
+	readonly instruments: PluginRegistry<Questionnaire>;
 	readonly adapters: PluginRegistry<Adapter>;
 }

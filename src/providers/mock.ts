@@ -2,6 +2,7 @@ import { zodToJsonSchema } from "../core/actions";
 import { FAILURE_TYPES } from "../core/failures";
 import { canonicalJson, hashOf } from "../core/hash";
 import type { ActionRegistry, DecisionProvider } from "../core/protocols";
+import { ANSWERS_ARG, ANSWER_ACTION, questionsOf } from "../core/questionnaire";
 import { err, ok } from "../core/result";
 import type {
 	Cost,
@@ -25,6 +26,8 @@ const ZERO_COST: Cost = {
 export const ID_PLACEHOLDER = "...";
 const ID_SUFFIX = "Id";
 const TARGET_FIELD = "target";
+const MOCK_INTEGER_RANGE = 11;
+const TWO_POW_32 = 4294967296;
 
 const isObject = (v: JsonValue | undefined): v is JsonObject =>
 	typeof v === "object" && v !== null && !Array.isArray(v);
@@ -163,6 +166,7 @@ class MockProvider implements DecisionProvider {
 		const action =
 			req.actionSpace[indexFromHash(hashOf([key, ctx.seedPath]), req.actionSpace.length)];
 		const def = action === undefined ? undefined : this.actions.get(action);
+		if (action === ANSWER_ACTION && def === undefined) return this.answer(req, key, ctx);
 		if (action === undefined || def === undefined)
 			return err({
 				agentId: req.agentId,
@@ -194,6 +198,51 @@ class MockProvider implements DecisionProvider {
 			agentId: req.agentId,
 			action,
 			args: validated.value.args,
+			provenance: "rule",
+			cost: ZERO_COST,
+			parseOk: true,
+		});
+	}
+
+	// Questionnaire answers: a valid value per question, drawn deterministically from the key.
+	private answer(
+		req: DecisionRequest,
+		key: string,
+		ctx: RoundContext,
+	): Result<Decision, ProviderFailure> {
+		const questions = questionsOf(req.observation);
+		if (questions === undefined)
+			return err({
+				agentId: req.agentId,
+				reason: "observation carries no questionnaire",
+				retryable: false,
+				excType: FAILURE_TYPES.invalidAction,
+			});
+		const answers: Record<string, JsonValue> = {};
+		for (const question of questions) {
+			const hash = hashOf([key, [...ctx.seedPath], req.agentId, question.id]);
+			switch (question.responseType) {
+				case "integer":
+					answers[question.id] = indexFromHash(hash, MOCK_INTEGER_RANGE);
+					break;
+				case "float":
+					answers[question.id] = Number.parseInt(hash.slice(0, 8), 16) / TWO_POW_32;
+					break;
+				case "choice": {
+					const choices = question.choices ?? [];
+					answers[question.id] = choices[indexFromHash(hash, choices.length)] ?? "";
+					break;
+				}
+				case "text":
+					answers[question.id] = `${ID_PLACEHOLDER} ${question.id}`;
+					break;
+			}
+		}
+		this.decided += 1;
+		return ok({
+			agentId: req.agentId,
+			action: ANSWER_ACTION,
+			args: { [ANSWERS_ARG]: answers },
 			provenance: "rule",
 			cost: ZERO_COST,
 			parseOk: true,

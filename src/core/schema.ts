@@ -146,6 +146,45 @@ export const PromptOptionsSchema = z.object({
 	contextWindow: z.number().int().positive().default(4000),
 });
 
+export const ArmSchema = z.object({
+	name: z.string().min(1),
+	role: z.enum(["treatment", "control"]),
+	overrides: JsonObjectSchema.default({}),
+	selection: SelectorSchema.optional(),
+});
+
+export const OutcomeSchema = z.object({
+	name: z.string().min(1),
+	metric: z.string().min(1),
+	direction: z.enum(["increase", "decrease", "any"]).default("any"),
+	targetDistribution: z.array(z.number()).optional(),
+});
+
+export const HypothesisSchema = z.object({
+	id: z.string().min(1),
+	claim: z.string(),
+	claimType: z.enum(["exploratory", "mechanism", "policy"]),
+	arms: z.array(ArmSchema),
+	outcomes: z.array(OutcomeSchema),
+});
+
+export const QuestionSchema = z
+	.object({
+		id: z.string().min(1),
+		prompt: z.string().min(1),
+		responseType: z.enum(["text", "integer", "float", "choice"]),
+		choices: z.array(z.string().min(1)).optional(),
+	})
+	.refine((q) => q.responseType !== "choice" || (q.choices?.length ?? 0) > 0, {
+		message: "choice questions need at least one choice",
+		path: ["choices"],
+	});
+
+export const QuestionnaireOptionsSchema = z.object({
+	questions: z.array(QuestionSchema).min(1),
+	entersMemory: z.boolean().default(true),
+});
+
 const ScenarioObjectSchema = z.object({
 	scenarioId: z.string().min(1),
 	replicationId: z.number().int().nonnegative().default(0),
@@ -162,6 +201,7 @@ const ScenarioObjectSchema = z.object({
 	llm: LLMSpecSchema.prefault({}),
 	prompt: PromptOptionsSchema.prefault({}),
 	plugins: z.array(z.string().min(1)).optional(),
+	hypothesis: HypothesisSchema.optional(),
 });
 
 type ScenarioInput = z.output<typeof ScenarioObjectSchema>;
@@ -195,28 +235,6 @@ const resolvePopulationSize = (scenario: ScenarioInput, ctx: z.RefinementCtx): S
 };
 
 export const ScenarioSchema = ScenarioObjectSchema.transform(resolvePopulationSize);
-
-export const ArmSchema = z.object({
-	name: z.string().min(1),
-	role: z.enum(["treatment", "control"]),
-	overrides: JsonObjectSchema.default({}),
-	selection: SelectorSchema.optional(),
-});
-
-export const OutcomeSchema = z.object({
-	name: z.string().min(1),
-	metric: z.string().min(1),
-	direction: z.enum(["increase", "decrease", "any"]).default("any"),
-	targetDistribution: z.array(z.number()).optional(),
-});
-
-export const HypothesisSchema = z.object({
-	id: z.string().min(1),
-	claim: z.string(),
-	claimType: z.enum(["exploratory", "mechanism", "policy"]),
-	arms: z.array(ArmSchema),
-	outcomes: z.array(OutcomeSchema),
-});
 
 export const PerturbationAxisSchema = z.object({
 	id: z.string().min(1),

@@ -12,6 +12,7 @@ import type {
 	PluginError,
 	PluginFactory,
 	PluginRegistry,
+	Questionnaire,
 	Registry,
 	Transition,
 } from "./protocols";
@@ -76,5 +77,6 @@ export const createRegistry = (): Registry => ({
 	providers: new NamedRegistry<DecisionProvider>("providers"),
 	policies: new NamedRegistry<ActivationPolicy>("policies"),
 	metrics: new NamedRegistry<Metric>("metrics"),
+	instruments: new NamedRegistry<Questionnaire>("instruments"),
 	adapters: new NamedRegistry<Adapter>("adapters"),
 });
