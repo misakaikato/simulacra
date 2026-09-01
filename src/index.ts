@@ -83,6 +83,7 @@ export type {
 	EffectReport,
 	EntityId,
 	Event,
+	EventFilter,
 	EventId,
 	EventKind,
 	FailureInfo,
@@ -231,6 +232,8 @@ export {
 	registerBuiltinAdapters,
 } from "./adapters";
 export * as stats from "./harness/stats";
+export type { AppOptions } from "./api/app";
+export { GUI_DIST_DIR, createApp } from "./api/app";
 export type {
 	AuditMessage,
 	AuditProgress,
