@@ -149,13 +149,14 @@ describe("runScenario", () => {
 		log.close();
 	});
 
-	test("intervene and questionnaire steps write placeholder events and not_implemented failures", async () => {
+	test("intervene and questionnaire steps that name nothing declared record failures and continue", async () => {
 		const out = tempDir();
 		const scenario = kernelScenario({
 			steps: [
 				{ kind: "run", ticks: 1 },
 				{ kind: "intervene", arm: "treatment" },
 				{ kind: "questionnaire", name: "exit" },
+				{ kind: "checkpoint" },
 				{ kind: "run", ticks: 1 },
 			],
 		});
@@ -163,25 +164,25 @@ describe("runScenario", () => {
 			createGateway: gatewayFactory,
 		});
 		expect(r.ok && r.value.status).toBe("succeeded");
+		expect(existsSync(join(out, CHECKPOINTS_DIR, "1", "meta.json"))).toBe(true);
 		const log = openSqliteEventLog(eventLogPath(out));
 		const intervention = log.query({ kind: ["intervention"] });
 		expect(intervention).toHaveLength(1);
-		if (intervention[0]?.kind === "intervention")
+		if (intervention[0]?.kind === "intervention") {
 			expect(intervention[0].payload).toEqual({
 				stepIndex: 1,
 				arm: "treatment",
 				targets: [],
 			});
-		const questionnaire = log
-			.query({ kind: ["measurement"] })
-			.filter((e) => e.kind === "measurement" && e.payload.instrument === "questionnaire");
-		expect(questionnaire).toHaveLength(1);
-		const failures = log.query({ kind: ["failure"] });
+			expect(intervention[0].t).toEqual({ tick: 1, substep: 0, seq: 0 });
+		}
 		expect(
-			failures.filter(
-				(f) => f.kind === "failure" && f.payload.excType === FAILURE_TYPES.notImplemented,
-			),
-		).toHaveLength(2);
+			log.query({ kind: ["measurement"] }).filter((e) => e.t.tick === 1 && e.t.substep === 0),
+		).toEqual([]);
+		const failures = log
+			.query({ kind: ["failure"] })
+			.map((f) => (f.kind === "failure" ? f.payload.excType : ""));
+		expect(failures).toEqual([FAILURE_TYPES.unknownArm, FAILURE_TYPES.unknownQuestionnaire]);
 		log.close();
 		const lines = readLog(out);
 		expect(lines.filter((l) => l.level === "error")).toHaveLength(2);

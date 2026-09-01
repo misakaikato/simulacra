@@ -24,6 +24,7 @@ import { failedRunResult } from "./harness/runner";
 import type { RunFn } from "./core/protocols";
 import { createGateway } from "./llm/gateway";
 import { loadPlugins, type PluginLoadError } from "./plugins";
+import { registerBuiltinInstruments } from "./instruments";
 import { registerBuiltinMetrics } from "./metrics";
 import { registerBuiltinModules } from "./modules";
 import { registerBuiltinPolicies } from "./policies";
@@ -225,6 +226,23 @@ export {
 } from "./providers/routers/aps";
 export { registerBuiltinModules } from "./modules";
 export { registerBuiltinMetrics } from "./metrics";
+export { QUESTIONNAIRE_KIND, createQuestionnaire, registerBuiltinInstruments } from "./instruments";
+export type { Question, Questionnaire } from "./core/protocols";
+export type { Arm, Selector, SelectorPredicate, Step } from "./core/types";
+export { matchesPredicate, matchesSelector, selectAgents } from "./core/selector";
+export {
+	ANSWERS_ARG,
+	ANSWER_ACTION,
+	QUESTIONNAIRE_KEY,
+	answerActionSummary,
+	answersSchema,
+	parseAnswers,
+	questionnaireInstruction,
+	questionnaireObservation,
+	questionsOf,
+	type AnswerIssue,
+	type ParsedAnswers,
+} from "./core/questionnaire";
 export { COHORT_RULE_KIND, downstreamOf, registerBuiltinProviders } from "./providers";
 export { registerBuiltinPolicies } from "./policies";
 export type { Transition } from "./core/protocols";
@@ -290,6 +308,7 @@ export const createDefaultRegistry = (): Registry => {
 		registerBuiltinExecutors(registry),
 		registerBuiltinModules(registry),
 		registerBuiltinMetrics(registry),
+		registerBuiltinInstruments(registry),
 		registerBuiltinAdapters(registry),
 	];
 	for (const r of results)

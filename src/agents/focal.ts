@@ -12,11 +12,19 @@ import type {
 	ModuleObservations,
 	PluginContext,
 	PluginError,
+	Questionnaire,
 	ResolveContext,
 	Rng,
 	World,
 	WorldView,
 } from "../core/protocols";
+import {
+	ANSWER_ACTION,
+	QUESTIONNAIRE_KEY,
+	answerActionSummary,
+	questionnaireInstruction,
+	questionnaireObservation,
+} from "../core/questionnaire";
 import { parseOptions } from "../core/registry";
 import { JsonValueSchema } from "../core/schema";
 import { err, ok } from "../core/result";
@@ -52,6 +60,7 @@ const RESERVED_KEYS: readonly string[] = [
 	CONTEXT_KEYS.name,
 	CONTEXT_KEYS.instructions,
 	CONTEXT_KEYS.memory,
+	CONTEXT_KEYS.intervention,
 ];
 
 const StateSchema = z.object({ components: z.array(JsonValueSchema) });
@@ -59,6 +68,14 @@ const StateSchema = z.object({ components: z.array(JsonValueSchema) });
 interface TickStash {
 	readonly t: LogicalTime;
 	readonly rng: Rng;
+}
+
+// Extra prompt material for a questionnaire round; `attribute` false keeps the interview
+// events off the agent's own timeline so memory components do not pick them up.
+interface InterviewExtra {
+	readonly observation: JsonObject;
+	readonly instructions: string;
+	readonly attribute: boolean;
 }
 
 const matchesPattern = (pattern: string, key: string): boolean =>
@@ -149,17 +166,73 @@ class FocalExecutor implements Executor {
 			for (const agentId of ids) this.noActions(agentId, t, log, rng);
 			return [];
 		}
-		const summaries = this.actionSummaries(actionSpace);
+		return this.requestsFor(
+			world,
+			ids,
+			t,
+			log,
+			rng,
+			observations,
+			actionSpace,
+			this.actionSummaries(actionSpace),
+		);
+	}
+
+	async interview(
+		world: WorldView,
+		ids: readonly EntityId[],
+		t: LogicalTime,
+		log: EventLog,
+		rng: Rng,
+		questionnaire: Questionnaire,
+	): Promise<readonly DecisionRequest[]> {
+		this.stash = { t, rng };
+		return this.requestsFor(
+			world,
+			ids,
+			t,
+			log,
+			rng,
+			undefined,
+			[ANSWER_ACTION],
+			[answerActionSummary(questionnaire)],
+			{
+				observation: { [QUESTIONNAIRE_KEY]: questionnaireObservation(questionnaire) },
+				instructions: questionnaireInstruction(questionnaire),
+				attribute: questionnaire.entersMemory,
+			},
+		);
+	}
+
+	private requestsFor(
+		world: WorldView,
+		ids: readonly EntityId[],
+		t: LogicalTime,
+		log: EventLog,
+		rng: Rng,
+		observations: ModuleObservations | undefined,
+		actionSpace: readonly string[],
+		summaries: readonly ActionSummary[],
+		interview?: InterviewExtra,
+	): readonly DecisionRequest[] {
 		const requests: DecisionRequest[] = [];
+		const attributed = interview === undefined || interview.attribute;
 		for (const agentId of ids) {
 			const context = this.buildContext(agentId, world, t, log, observations?.get(agentId));
-			const input = this.promptInput(agentId, context, summaries);
+			const input = this.promptInput(agentId, context, summaries, interview);
 			const rendered = renderPrompt(input, this.ctx.scenario.prompt);
 			const contentSha = log.putContent(promptText(input, rendered));
 			const eventId = newEventId(rng);
 			log.append(
 				makeEvent(
-					{ eventId, runId: this.runId, t, seedPath: rng.path, agentId },
+					{
+						eventId,
+						runId: this.runId,
+						t,
+						seedPath: rng.path,
+						...(attributed ? { agentId } : {}),
+						...(interview === undefined ? {} : { provenance: "interview" }),
+					},
 					{
 						kind: "observation",
 						payload: {
@@ -289,16 +362,23 @@ class FocalExecutor implements Executor {
 		agentId: EntityId,
 		context: ReadonlyMap<string, JsonValue>,
 		actions: readonly ActionSummary[],
+		interview?: InterviewExtra,
 	): PromptInput {
 		const name = context.get(CONTEXT_KEYS.name);
 		const instructions = context.get(CONTEXT_KEYS.instructions);
 		const observation: Record<string, JsonValue> = {};
 		for (const [k, v] of context) if (!RESERVED_KEYS.includes(k)) observation[k] = v;
+		for (const [k, v] of Object.entries(interview?.observation ?? {})) observation[k] = v;
 		return {
 			agentId,
 			...(typeof name === "string" ? { name } : {}),
 			persona: personaOf(context.get(CONTEXT_KEYS.persona)),
-			instructions: typeof instructions === "string" ? instructions : "",
+			instructions: [
+				typeof instructions === "string" ? instructions : "",
+				interview?.instructions ?? "",
+			]
+				.filter((s) => s.length > 0)
+				.join("\n\n"),
 			memory: memoryEntriesOf(context.get(CONTEXT_KEYS.memory)).map((m) => ({
 				...m,
 				eventId: toEventId(m.eventId),

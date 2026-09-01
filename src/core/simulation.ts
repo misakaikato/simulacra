@@ -10,6 +10,8 @@ import { ZERO_EVENT_ID, makeRunId, newEntityId, newEventId, toEntityId } from ".
 import { eventLogPath, openSqliteEventLog } from "./log";
 import { describeParamError, resolveScenarioParams } from "./params";
 import { AGENT_ENTITY, buildPopulation } from "./population";
+import { bareInterviewRequests, parseAnswers } from "./questionnaire";
+import { selectAgents } from "./selector";
 import type {
 	ActivationPolicy,
 	Clock,
@@ -24,6 +26,7 @@ import type {
 	ModuleObservations,
 	PluginContext,
 	PluginError,
+	Questionnaire,
 	Registry,
 	ResolveContext,
 	Rng,
@@ -32,7 +35,7 @@ import type {
 import { applyEffects } from "./resolver";
 import { err, ok } from "./result";
 import { keyFromLabel, rngFromSeed } from "./rng";
-import { scenarioHash } from "./scenario";
+import { overrideScenario, scenarioHash } from "./scenario";
 import type {
 	ActionCall,
 	Activation,
@@ -55,6 +58,7 @@ import type {
 	Result,
 	RunId,
 	Scenario,
+	Selector,
 } from "./types";
 import { createWorld } from "./world";
 
@@ -121,7 +125,15 @@ export interface EventFields {
 	readonly agentId?: EntityId;
 	readonly parent?: EventId;
 	readonly provenance?: Provenance;
+	// Boundary steps (questionnaires, interventions) record at the tick boundary without
+	// consuming a sequence number, so a checkpoint can still follow them.
+	readonly atBoundary?: boolean;
 }
+
+// Paths an intervention may change while a run is in flight
+const HOT_PREFIXES: readonly string[] = ["params.", "prompt.", "policy.options."];
+const INTERVENTION_KEY = "intervention";
+const INSTRUCTION_KEY = "instruction";
 
 export interface Instrument {
 	readonly name: string;
@@ -141,6 +153,8 @@ export interface Simulation {
 	readonly logger: Logger;
 	initialize(): Promise<Result<void, FailureInfo>>;
 	step(activationOverride?: Activation): Promise<Result<TickReport, FailureInfo>>;
+	questionnaire(name: string, targets: Selector | undefined, stepIndex: number): Promise<void>;
+	intervene(arm: string, instruction: string | undefined, stepIndex: number): Promise<void>;
 	emit(init: EventInit, fields?: EventFields): Event;
 	integrity(): Integrity;
 	cost(): Cost;
@@ -155,9 +169,14 @@ interface AgentOutcome {
 }
 
 interface ExecutorSlot {
-	readonly executor: Executor;
+	executor: Executor;
 	readonly provider: DecisionProvider;
 	consecutiveBatchFailures: number;
+}
+
+// Shared with the plugin context so plugins that keep `ctx` see the scenario as intervened.
+interface ScenarioHolder {
+	scenario: Scenario;
 }
 
 interface ModuleSlot {
@@ -205,7 +224,6 @@ export const moduleStepSummary = (
 
 class KernelSimulation implements Simulation {
 	readonly runId: RunId;
-	readonly scenario: Scenario;
 	readonly scenarioHash: string;
 	readonly world: World;
 	readonly clock: Clock;
@@ -213,15 +231,20 @@ class KernelSimulation implements Simulation {
 	readonly gateway: LLMGateway;
 	readonly logger: Logger;
 	private readonly registry: Registry;
+	private readonly ctx: PluginContext;
+	private readonly holder: ScenarioHolder;
+	private declared: Scenario;
 	private readonly rootRng: Rng;
 	private readonly boundaryRng: Rng;
 	private readonly modules: ReadonlyMap<string, Module>;
 	private readonly moduleSlots: readonly ModuleSlot[];
-	private readonly executorSlots: readonly ExecutorSlot[];
+	private readonly executorSlots: ExecutorSlot[];
 	private readonly providers: ReadonlyMap<string, DecisionProvider>;
-	private readonly policy: ActivationPolicy;
+	private policy: ActivationPolicy;
 	private readonly instruments: readonly Instrument[];
+	private readonly questionnaires: ReadonlyMap<string, Questionnaire>;
 	private readonly lastMeasurements = new Map<string, JsonValue>();
+	private readonly pendingInstructions = new Map<EntityId, string>();
 	private tickLogger: Logger;
 	private eventRng: Rng;
 	private lastEventId: EventId = ZERO_EVENT_ID;
@@ -240,7 +263,9 @@ class KernelSimulation implements Simulation {
 
 	constructor(parts: {
 		readonly runId: RunId;
-		readonly scenario: Scenario;
+		readonly holder: ScenarioHolder;
+		readonly declared: Scenario;
+		readonly ctx: PluginContext;
 		readonly scenarioHash: string;
 		readonly registry: Registry;
 		readonly world: World;
@@ -253,10 +278,13 @@ class KernelSimulation implements Simulation {
 		readonly providers: ReadonlyMap<string, DecisionProvider>;
 		readonly policy: ActivationPolicy;
 		readonly instruments: readonly Instrument[];
+		readonly questionnaires: ReadonlyMap<string, Questionnaire>;
 		readonly resume?: ResumePoint;
 	}) {
 		this.runId = parts.runId;
-		this.scenario = parts.scenario;
+		this.holder = parts.holder;
+		this.declared = parts.declared;
+		this.ctx = parts.ctx;
 		this.scenarioHash = parts.scenarioHash;
 		this.registry = parts.registry;
 		this.world = parts.world;
@@ -272,10 +300,11 @@ class KernelSimulation implements Simulation {
 			module,
 			consecutiveFailures: 0,
 		}));
-		this.executorSlots = parts.executors;
+		this.executorSlots = [...parts.executors];
 		this.providers = parts.providers;
 		this.policy = parts.policy;
 		this.instruments = parts.instruments;
+		this.questionnaires = parts.questionnaires;
 		this.clock = createClock(parts.resume?.now);
 		if (parts.resume !== undefined) {
 			this.lastEventId = parts.resume.lastEventId;
@@ -284,8 +313,12 @@ class KernelSimulation implements Simulation {
 		}
 	}
 
+	get scenario(): Scenario {
+		return this.holder.scenario;
+	}
+
 	emit(init: EventInit, fields: EventFields = {}): Event {
-		this.clock.nextSeq();
+		if (fields.atBoundary !== true) this.clock.nextSeq();
 		const event = makeEvent(
 			{
 				eventId: this.nextEventId(),
@@ -594,7 +627,364 @@ class KernelSimulation implements Simulation {
 				out.set(agentId, { ...(out.get(agentId) ?? {}), ...value });
 			}
 		}
+		if (this.pendingInstructions.size > 0)
+			for (const id of ids) {
+				const instruction = this.pendingInstructions.get(id);
+				if (instruction === undefined) continue;
+				this.pendingInstructions.delete(id);
+				out.set(id, {
+					...(out.get(id) ?? {}),
+					[INTERVENTION_KEY]: { [INSTRUCTION_KEY]: instruction },
+				});
+			}
 		return out;
+	}
+
+	// Boundary steps
+
+	async questionnaire(
+		name: string,
+		targets: Selector | undefined,
+		stepIndex: number,
+	): Promise<void> {
+		const boundary = { atBoundary: true, provenance: "kernel" as const };
+		const q = this.questionnaires.get(name);
+		if (q === undefined) {
+			this.recordFailure(
+				{
+					stage: "questionnaire",
+					excType: FAILURE_TYPES.unknownQuestionnaire,
+					message: `questionnaire '${name}' is not declared in instruments`,
+					retryable: false,
+				},
+				boundary,
+			);
+			return;
+		}
+		const rng = this.rootRng.fork(keyFromLabel(`questionnaire:${stepIndex}`));
+		const ids =
+			targets === undefined
+				? this.world.ids(AGENT_ENTITY)
+				: selectAgents(this.world, targets, rng.fork(keyFromLabel("select")));
+		if (ids.length === 0)
+			this.recordFailure(
+				{
+					stage: "questionnaire",
+					excType: FAILURE_TYPES.emptySelection,
+					message: `questionnaire '${name}' selected no agents`,
+					retryable: false,
+				},
+				boundary,
+			);
+		const handled = new Set<EntityId>();
+		for (const slot of this.executorSlots) {
+			const { executor } = slot;
+			const owned = ids.filter(
+				(id) =>
+					!handled.has(id) &&
+					this.world.row(executor.entity, id) !== undefined &&
+					(executor.owns?.(this.world, id) ?? true),
+			);
+			if (owned.length === 0) continue;
+			for (const id of owned) handled.add(id);
+			await this.interview(
+				q,
+				slot,
+				owned,
+				rng.fork(keyFromLabel(`executor:${executor.name}`)),
+			);
+		}
+		for (const id of ids)
+			if (!handled.has(id))
+				this.recordFailure(
+					{
+						stage: "questionnaire",
+						excType: FAILURE_TYPES.noOwner,
+						message: `no executor owns agent ${id}`,
+						retryable: false,
+					},
+					{ ...boundary, agentId: id },
+				);
+		this.logger.info("questionnaire complete", {
+			name,
+			targets: ids.length,
+			questions: q.questions.length,
+		});
+	}
+
+	private async interview(
+		q: Questionnaire,
+		slot: ExecutorSlot,
+		ids: readonly EntityId[],
+		rng: Rng,
+	): Promise<void> {
+		const { executor, provider } = slot;
+		const t = this.clock.now;
+		const boundary = { atBoundary: true };
+		const requests =
+			executor.interview === undefined
+				? bareInterviewRequests(
+						this.world,
+						executor.entity,
+						ids,
+						t,
+						this.log,
+						rng.fork(keyFromLabel("observe")),
+						this.runId,
+						q,
+					)
+				: await executor.interview(
+						this.world,
+						ids,
+						t,
+						this.log,
+						rng.fork(keyFromLabel("observe")),
+						q,
+					);
+		let results: readonly Result<Decision, ProviderFailure>[] = [];
+		const graph = this.graph();
+		try {
+			results = await provider.decide(requests, {
+				t,
+				runId: this.runId,
+				seedPath: rng.path,
+				world: this.world,
+				log: this.log,
+				...(graph === undefined ? {} : { graph }),
+			});
+		} catch (e) {
+			const d = describeError(e);
+			this.recordFailure(
+				{
+					stage: "interview",
+					excType: FAILURE_TYPES.providerThrew,
+					message: `${d.excType}: ${d.message}`,
+					stack: d.stack,
+					retryable: false,
+				},
+				boundary,
+			);
+		}
+		const decisions: Decision[] = [];
+		for (const [i, request] of requests.entries()) {
+			const result = results[i];
+			const attribution = q.entersMemory ? { agentId: request.agentId } : {};
+			if (result === undefined || !result.ok || result.value.agentId !== request.agentId) {
+				const failure: ProviderFailure =
+					result === undefined || result.ok
+						? {
+								agentId: request.agentId,
+								reason:
+									result === undefined
+										? "provider returned no result"
+										: "decision is for a different agent",
+								retryable: false,
+								excType: FAILURE_TYPES.providerContractViolation,
+							}
+						: result.error;
+				this.recordFailure(
+					{
+						stage: "interview",
+						excType: failure.excType ?? "ProviderFailure",
+						message: failure.reason,
+						retryable: failure.retryable,
+					},
+					{ ...boundary, agentId: request.agentId, parent: request.observationEvent },
+				);
+				continue;
+			}
+			const decision = result.value;
+			const rationaleSha =
+				decision.rationale === undefined
+					? undefined
+					: this.log.putContent(decision.rationale);
+			const event = this.emit(
+				{
+					kind: "decision",
+					payload: {
+						action: decision.action,
+						args: decision.args,
+						...(decision.soft === undefined ? {} : { soft: decision.soft }),
+						...(rationaleSha === undefined ? {} : { rationaleSha }),
+						provider: provider.name,
+						parseOk: decision.parseOk,
+					},
+				},
+				{
+					...boundary,
+					...attribution,
+					parent: request.observationEvent,
+					provenance: "interview",
+				},
+			);
+			const parsed = parseAnswers(q, decision.args);
+			for (const [questionId, value] of Object.entries(parsed.answers))
+				this.emit(
+					{
+						kind: "measurement",
+						payload: { instrument: q.name, name: questionId, value },
+					},
+					{
+						...boundary,
+						agentId: request.agentId,
+						parent: event.eventId,
+						provenance: "interview",
+					},
+				);
+			for (const issue of parsed.issues)
+				this.recordFailure(
+					{
+						stage: "interview",
+						excType: FAILURE_TYPES.invalidAnswer,
+						message: `question '${issue.questionId}': ${issue.reason}`,
+						retryable: false,
+					},
+					{ ...boundary, agentId: request.agentId, parent: event.eventId },
+				);
+			decisions.push({ ...decision, provenance: "interview" });
+		}
+		if (!q.entersMemory || decisions.length === 0) return;
+		try {
+			await executor.after(decisions, { applied: 0, rejected: [] }, this.log);
+		} catch (e) {
+			const d = describeError(e);
+			this.recordFailure(
+				{
+					stage: "after",
+					excType: d.excType,
+					message: `executor '${executor.name}': ${d.message}`,
+					stack: d.stack,
+					retryable: false,
+				},
+				boundary,
+			);
+		}
+	}
+
+	async intervene(
+		arm: string,
+		instruction: string | undefined,
+		stepIndex: number,
+	): Promise<void> {
+		const boundary = { atBoundary: true, provenance: "kernel" as const };
+		const found = this.scenario.hypothesis?.arms.find((a) => a.name === arm);
+		if (found === undefined) {
+			this.emit({ kind: "intervention", payload: { stepIndex, arm, targets: [] } }, boundary);
+			this.recordFailure(
+				{
+					stage: "intervene",
+					excType: FAILURE_TYPES.unknownArm,
+					message: `arm '${arm}' is not declared in the hypothesis`,
+					retryable: false,
+				},
+				boundary,
+			);
+			return;
+		}
+		for (const [path, value] of Object.entries(found.overrides))
+			this.applyHotOverride(path, value, boundary);
+		const targets =
+			found.selection === undefined
+				? this.world.ids(AGENT_ENTITY)
+				: selectAgents(
+						this.world,
+						found.selection,
+						this.rootRng.fork(keyFromLabel(`intervene:${stepIndex}`)),
+					);
+		this.emit({ kind: "intervention", payload: { stepIndex, arm, targets } }, boundary);
+		if (targets.length === 0)
+			this.recordFailure(
+				{
+					stage: "intervene",
+					excType: FAILURE_TYPES.emptySelection,
+					message: `arm '${arm}' selected no agents`,
+					retryable: false,
+				},
+				boundary,
+			);
+		if (instruction !== undefined)
+			for (const id of targets) this.pendingInstructions.set(id, instruction);
+		this.logger.info("intervention applied", {
+			arm,
+			targets: targets.length,
+			overrides: Object.keys(found.overrides),
+		});
+	}
+
+	// Hot overrides re-derive the scenario, re-create the policy and any executor whose
+	// options changed, and refuse anything that would alter modules or providers mid-run.
+	private applyHotOverride(path: string, value: JsonValue, fields: EventFields): void {
+		const reject = (excType: string, message: string): void =>
+			this.recordFailure(
+				{
+					stage: "intervene",
+					excType,
+					message: `override '${path}': ${message}`,
+					retryable: false,
+				},
+				fields,
+			);
+		if (!HOT_PREFIXES.some((p) => path.startsWith(p)))
+			return reject(
+				FAILURE_TYPES.overrideNotHot,
+				`only ${HOT_PREFIXES.map((p) => `${p}*`).join(", ")} can change during a run`,
+			);
+		const declared = overrideScenario(this.declared, path, value);
+		if (!declared.ok) return reject(FAILURE_TYPES.overrideFailed, declared.error.kind);
+		const resolved = resolveScenarioParams(declared.value);
+		if (!resolved.ok)
+			return reject(FAILURE_TYPES.overrideFailed, describeParamError(resolved.error));
+		const next = resolved.value;
+		const current = this.scenario;
+		const changed = (a: unknown, b: unknown): boolean =>
+			JSON.stringify(a) !== JSON.stringify(b);
+		if (changed(next.modules, current.modules) || changed(next.providers, current.providers))
+			return reject(
+				FAILURE_TYPES.overrideNotHot,
+				"it changes module or provider options, which are fixed for the run",
+			);
+		const previous = this.holder.scenario;
+		this.holder.scenario = next;
+		const replacements: { readonly slot: ExecutorSlot; readonly executor: Executor }[] = [];
+		for (const [i, spec] of next.executors.entries()) {
+			const slot = this.executorSlots[i];
+			if (slot === undefined || !changed(spec, current.executors[i])) continue;
+			const created = this.registry.executors.create(spec, this.ctx);
+			const problem = created.ok
+				? (() => {
+						const declaredOk = created.value.declare(this.world);
+						return declaredOk.ok ? undefined : declaredOk.error;
+					})()
+				: created.error;
+			if (!created.ok || problem !== undefined) {
+				this.holder.scenario = previous;
+				return reject(
+					FAILURE_TYPES.overrideFailed,
+					`executor '${spec.name ?? spec.kind}' cannot be rebuilt: ${JSON.stringify(problem)}`,
+				);
+			}
+			if (created.value.provider !== slot.executor.provider) {
+				this.holder.scenario = previous;
+				return reject(
+					FAILURE_TYPES.overrideNotHot,
+					`executor '${created.value.name}' would switch provider`,
+				);
+			}
+			created.value.setState(slot.executor.getState());
+			replacements.push({ slot, executor: created.value });
+		}
+		const policy = this.registry.policies.create(next.policy, this.ctx);
+		if (!policy.ok) {
+			this.holder.scenario = previous;
+			return reject(
+				FAILURE_TYPES.overrideFailed,
+				`policy cannot be rebuilt: ${JSON.stringify(policy.error)}`,
+			);
+		}
+		for (const { slot, executor } of replacements) slot.executor = executor;
+		this.policy = policy.value;
+		this.declared = declared.value;
+		this.logger.info("hot override applied", { path, value });
 	}
 
 	private async runExecutor(
@@ -1181,11 +1571,12 @@ class KernelSimulation implements Simulation {
 		}
 	}
 
+	// Boundary steps record at substep 0 before the tick starts; only in-tick events count.
 	private assertComplete(tick: number, activation: Activation): void {
 		const decisions = new Map<string, number>();
 		const failures = new Set<string>();
 		for (const e of this.log.query({ tick, kind: ["decision", "failure"] })) {
-			if (e.agentId === undefined) continue;
+			if (e.agentId === undefined || e.t.substep === 0) continue;
 			if (e.kind === "decision")
 				decisions.set(e.agentId, (decisions.get(e.agentId) ?? 0) + 1);
 			else failures.add(e.agentId);
@@ -1288,9 +1679,11 @@ export const createSimulation = (
 ): Result<Simulation, FailureInfo> => {
 	const runId = makeRunId(scenario.scenarioId, scenario.replicationId);
 	const logger = deps.logger.child({ runId });
-	const resolved = resolveScenarioParams(resolvedScenario(scenario, deps));
+	const declared = resolvedScenario(scenario, deps);
+	const resolved = resolveScenarioParams(declared);
 	if (!resolved.ok) return instantiateError("ParamResolve", describeParamError(resolved.error));
 	const effective = resolved.value;
+	const holder: ScenarioHolder = { scenario: effective };
 	const resumeFrom = deps.resumeFrom;
 	const world = resumeFrom?.world ?? createWorld();
 	const rootRng = rngFromSeed(effective.seed, effective.seedPath);
@@ -1322,7 +1715,9 @@ export const createSimulation = (
 		return ok(built.value);
 	};
 	const ctx: PluginContext = {
-		scenario: effective,
+		get scenario() {
+			return holder.scenario;
+		},
 		registry,
 		logger,
 		gateway,
@@ -1423,19 +1818,28 @@ export const createSimulation = (
 		);
 
 	const instruments: Instrument[] = [];
+	const questionnaires = new Map<string, Questionnaire>();
 	for (const spec of effective.instruments) {
+		const name = spec.name ?? spec.kind;
+		if (registry.instruments.has(spec.kind)) {
+			const created = registry.instruments.create(spec, ctx);
+			if (!created.ok)
+				return instantiateError(
+					"InstrumentCreate",
+					`instrument '${spec.kind}': ${JSON.stringify(created.error)}`,
+				);
+			if (questionnaires.has(name))
+				return instantiateError("InstrumentCreate", `duplicate questionnaire '${name}'`);
+			questionnaires.set(name, { ...created.value, name });
+			continue;
+		}
 		const created = registry.metrics.create(spec, ctx);
 		if (!created.ok)
 			return instantiateError(
 				"InstrumentCreate",
 				`instrument '${spec.kind}': ${JSON.stringify(created.error)}`,
 			);
-		instruments.push({
-			name: spec.name ?? spec.kind,
-			kind: spec.kind,
-			every: spec.every ?? 1,
-			metric: created.value,
-		});
+		instruments.push({ name, kind: spec.kind, every: spec.every ?? 1, metric: created.value });
 	}
 
 	if (resumeFrom !== undefined) {
@@ -1463,7 +1867,9 @@ export const createSimulation = (
 	const log = deps.log ?? openSqliteEventLog(eventLogPath(deps.outDir));
 	const simulation = new KernelSimulation({
 		runId,
-		scenario: effective,
+		holder,
+		declared,
+		ctx,
 		scenarioHash: scenarioHash(scenario),
 		registry,
 		world,
@@ -1476,6 +1882,7 @@ export const createSimulation = (
 		providers,
 		policy: policy.value,
 		instruments,
+		questionnaires,
 		...(resumeFrom === undefined ? {} : { resume: resumePointOf(resumeFrom) }),
 	});
 	failureSink.handle = (failure) => simulation.recordGatewayFailure(failure);
