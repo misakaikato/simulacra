@@ -22,7 +22,8 @@ export const formatNumber = (x: number | null | undefined, digits = 4): string =
 	if (x === Number.POSITIVE_INFINITY) return "inf";
 	if (x === Number.NEGATIVE_INFINITY) return "-inf";
 	if (Number.isInteger(x)) return String(x);
-	if (x !== 0 && Math.abs(x) < 1e-3) return x.toExponential(2);
+	if (Math.abs(x) < 1e-12) return "0";
+	if (Math.abs(x) < 1e-3) return x.toExponential(2);
 	return x.toFixed(digits);
 };
 
