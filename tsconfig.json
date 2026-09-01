@@ -19,6 +19,6 @@
 		"skipLibCheck": true,
 		"forceConsistentCasingInFileNames": true
 	},
-	"include": ["src", "tests", "eslint.config.js"],
+	"include": ["src", "tests", "eslint.config.js", "gui/vite.config.ts", "gui/dev-mock.ts"],
 	"exclude": ["node_modules", "dist", "gui/dist", "simulacra-data"]
 }
