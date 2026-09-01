@@ -2,7 +2,7 @@ import { existsSync, readFileSync, statSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import pkg from "../package.json" with { type: "json" };
 import { registerBuiltinAdapters } from "./adapters";
-import { registerBuiltinExecutors } from "./agents";
+import { registerBuiltinExecutors, registerBuiltinTransitions } from "./agents";
 import { inspectRun, type InspectQuery, type InspectResult } from "./core/inspect";
 import type { Registry } from "./core/protocols";
 import { createRegistry } from "./core/registry";
@@ -20,6 +20,7 @@ import {
 } from "./core/run";
 import { err, ok } from "./core/result";
 import { digestRun, readRunScenario, runDirOfCheckpoint } from "./core/runDir";
+export { openRunLog, withRunLog } from "./core/runDir";
 import { parseScenarioYaml, resolveScenarioPlugins, type ScenarioIssue } from "./core/scenario";
 import type { GatewayFactory } from "./core/simulation";
 import type { AuditPlan, FailureInfo, Result, RunResult, Scenario } from "./core/types";
@@ -28,6 +29,7 @@ import { failedRunResult } from "./harness/runner";
 import type { RunFn } from "./core/protocols";
 import { createGateway } from "./llm/gateway";
 import { loadPlugins, type PluginLoadError } from "./plugins";
+import { registerBuiltinInstruments } from "./instruments";
 import { registerBuiltinMetrics } from "./metrics";
 import { registerBuiltinModules } from "./modules";
 import { registerBuiltinPolicies } from "./policies";
@@ -175,22 +177,102 @@ export {
 	modelsOf,
 } from "./harness/conditions";
 export { LOG_FILE, RESULT_FILE } from "./core/run";
-export {
-	CHECKPOINTS_DIR,
-	SCENARIO_FILE,
-	checkpointTicks,
-	openRunLog,
-	readRunScenario,
-	withRunLog,
-} from "./core/runDir";
+export { CHECKPOINTS_DIR, SCENARIO_FILE, checkpointTicks, readRunScenario } from "./core/runDir";
 export { EDGE_COLUMNS, EDGE_ENTITY, FOLLOW_KIND } from "./modules";
-export { createRuleProvider, type RuleFn } from "./providers/rule";
+export {
+	createRuleProvider,
+	ruleDecision,
+	thresholdRule,
+	type RuleFn,
+	type ThresholdRuleOptions,
+} from "./providers/rule";
 export { createMockProvider } from "./providers/mock";
+export {
+	ARCHETYPE_KIND,
+	ArchetypeOptionsSchema,
+	aggregateObservations,
+	createArchetypeProvider,
+	groupRequests,
+	majorityVote,
+	publicPersonaOf,
+	type ArchetypeProvider,
+	type ArchetypeProviderOptions,
+	type ArchetypeReport,
+} from "./providers/archetype";
+export {
+	SURROGATE_KIND,
+	SurrogateOptionsSchema,
+	createSurrogateProvider,
+	fitSoftmax,
+	predictProbabilities,
+	softmax,
+	type SoftmaxModel,
+	type SurrogateProvider,
+	type SurrogateProviderOptions,
+	type TraceEntry,
+} from "./providers/surrogate";
+export {
+	CACHE_KIND,
+	CacheOptionsSchema,
+	cacheKeyOf,
+	createCacheProvider,
+	type CacheProviderOptions,
+} from "./providers/cache";
+export {
+	TOPO_KIND,
+	TopoOptionsSchema,
+	buildCells,
+	createTopoProvider,
+	execDistance,
+	exposureHistogram,
+	profilesOf,
+	type AgentProfile,
+	type Cell,
+	type TopoProvider,
+	type TopoProviderOptions,
+} from "./providers/routers/topo";
+export {
+	APS_KIND,
+	ApsOptionsSchema,
+	apportion,
+	createApsProvider,
+	interpolate,
+	miniBatchKMeans,
+	projectToSimplex,
+	tailScores,
+	type ApsProvider,
+	type ApsProviderOptions,
+	type ApsReport,
+} from "./providers/routers/aps";
 export { registerBuiltinModules } from "./modules";
 export { registerBuiltinMetrics } from "./metrics";
-export { registerBuiltinProviders } from "./providers";
+export { QUESTIONNAIRE_KIND, createQuestionnaire, registerBuiltinInstruments } from "./instruments";
+export type { Question, Questionnaire } from "./core/protocols";
+export type { Arm, Selector, SelectorPredicate, Step } from "./core/types";
+export { matchesPredicate, matchesSelector, selectAgents } from "./core/selector";
+export {
+	ANSWERS_ARG,
+	ANSWER_ACTION,
+	QUESTIONNAIRE_KEY,
+	answerActionSummary,
+	answersSchema,
+	parseAnswers,
+	questionnaireInstruction,
+	questionnaireObservation,
+	questionsOf,
+	type AnswerIssue,
+	type ParsedAnswers,
+} from "./core/questionnaire";
+export { COHORT_RULE_KIND, downstreamOf, registerBuiltinProviders } from "./providers";
 export { registerBuiltinPolicies } from "./policies";
-export { registerBuiltinExecutors } from "./agents";
+export type { Transition } from "./core/protocols";
+export {
+	COHORT_KIND,
+	CohortOptionsSchema,
+	registerBuiltinExecutors,
+	registerBuiltinTransitions,
+} from "./agents";
+export { OPINION_DYNAMICS_KIND, opinionDynamics } from "./agents/transitions";
 export { jsonlSink, prettySink } from "./logging/sinks";
 export type { AuditError, AuditOptions, AuditRun, AnalyzeOptions } from "./harness/runner";
 export {
@@ -269,9 +351,11 @@ export const createDefaultRegistry = (): Registry => {
 	const results = [
 		registerBuiltinPolicies(registry),
 		registerBuiltinProviders(registry),
+		registerBuiltinTransitions(registry),
 		registerBuiltinExecutors(registry),
 		registerBuiltinModules(registry),
 		registerBuiltinMetrics(registry),
+		registerBuiltinInstruments(registry),
 		registerBuiltinAdapters(registry),
 	];
 	for (const r of results)

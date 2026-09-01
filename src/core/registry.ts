@@ -12,7 +12,9 @@ import type {
 	PluginError,
 	PluginFactory,
 	PluginRegistry,
+	Questionnaire,
 	Registry,
+	Transition,
 } from "./protocols";
 import { err, ok } from "./result";
 import type { PluginSpec, Result } from "./types";
@@ -70,9 +72,11 @@ export const parseOptions = <S extends z.ZodType>(
 export const createRegistry = (): Registry => ({
 	actions: createActionRegistry(),
 	executors: new NamedRegistry<Executor>("executors"),
+	transitions: new NamedRegistry<Transition>("transitions"),
 	modules: new NamedRegistry<Module>("modules"),
 	providers: new NamedRegistry<DecisionProvider>("providers"),
 	policies: new NamedRegistry<ActivationPolicy>("policies"),
 	metrics: new NamedRegistry<Metric>("metrics"),
+	instruments: new NamedRegistry<Questionnaire>("instruments"),
 	adapters: new NamedRegistry<Adapter>("adapters"),
 });

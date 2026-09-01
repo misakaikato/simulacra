@@ -28,6 +28,16 @@ export const FAILURE_TYPES = {
 	consecutiveBatchFailures: "consecutive_batch_failures",
 	consecutiveModuleFailures: "consecutive_module_failures",
 	incompleteTick: "IncompleteTick",
+	missingColumn: "missing_column",
+	noFeatures: "no_features",
+	notFitted: "not_fitted",
+	unknownQuestionnaire: "unknown_questionnaire",
+	invalidAnswer: "invalid_answer",
+	emptySelection: "empty_selection",
+	unknownArm: "unknown_arm",
+	overrideNotHot: "override_not_hot",
+	overrideFailed: "override_failed",
+	noOwner: "no_owner",
 } as const;
 
 export type FailureType = (typeof FAILURE_TYPES)[keyof typeof FAILURE_TYPES];

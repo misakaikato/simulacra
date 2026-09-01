@@ -263,8 +263,37 @@ export const tvdToTargetMetric = (name: string, options: TvdOptions): Metric => 
 	},
 });
 
+// columnMean: arithmetic mean of a numeric column over all rows of an entity
+
+const ColumnMeanOptions = z.object({
+	entity: z.string().min(1).default("agent"),
+	column: z.string().min(1),
+});
+
+export const columnMeanMetric = (name: string, entity: string, column: string): Metric => ({
+	name,
+	compute: (view) => {
+		if (!hasColumn(view, entity, column)) return 0;
+		const values = view.column<Scalar>(entity, column);
+		const n = values.length;
+		if (n === 0) return 0;
+		let total = 0;
+		for (let i = 0; i < n; i += 1) total += numberOf(values.at(i));
+		return total / n;
+	},
+});
+
 export const registerBuiltinMetrics = (registry: Registry): Result<void, DuplicatePlugin> => {
 	const factories: readonly (readonly [string, PluginFactory<Metric>])[] = [
+		[
+			"columnMean",
+			(spec) => {
+				const o = parseOptions(SLOT, spec, ColumnMeanOptions);
+				return o.ok
+					? ok(columnMeanMetric(spec.name ?? spec.kind, o.value.entity, o.value.column))
+					: o;
+			},
+		],
 		["cooperationRate", ratioFactory("pd.cooperations")],
 		["averagePayoff", ratioFactory("pd.payoff")],
 		["stanceAssortativity", groupFactory(assortativityOf)],
