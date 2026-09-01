@@ -36,7 +36,9 @@
 		"dev:mock": "bun gui/dev-mock.ts"
 	},
 	"dependencies": {
+		"@modelcontextprotocol/sdk": "^1.30.0",
 		"citty": "0.2.2",
+		"hono": "^4.13.5",
 		"yaml": "^2.9.0",
 		"zod": "^4.5.4"
 	},
