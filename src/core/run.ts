@@ -8,6 +8,7 @@ import {
 	type LogSink,
 } from "../logging/logger";
 import { jsonlSink } from "../logging/sinks";
+import type { EventHandler } from "./bus";
 import { loadCheckpoint, saveCheckpoint, type CheckpointState } from "./checkpoint";
 import { FAILURE_TYPES } from "./failures";
 import { ZERO_EVENT_ID, makeRunId } from "./ids";
@@ -52,6 +53,7 @@ export interface RunOptions {
 	readonly createGateway: GatewayFactory;
 	readonly baseDir?: string;
 	readonly checkpointEvery?: number;
+	readonly onEvent?: EventHandler;
 }
 
 export type ResumeOptions = Omit<RunOptions, "ticksOverride" | "providerOverride">;
@@ -261,6 +263,7 @@ const drive = async (
 		logger,
 		createGateway: opts.createGateway,
 		...(opts.baseDir === undefined ? {} : { baseDir: opts.baseDir }),
+		...(opts.onEvent === undefined ? {} : { onEvent: opts.onEvent }),
 		...(drive.resumeFrom === undefined ? {} : { resumeFrom: drive.resumeFrom }),
 	});
 	const finish = (result: RunResult): Result<RunResult, FailureInfo> => {
