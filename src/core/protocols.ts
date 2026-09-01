@@ -160,6 +160,8 @@ export interface Executor {
 	readonly name: string;
 	readonly entity: string;
 	readonly provider: string;
+	readonly resolvesOwnActions?: boolean;
+	readonly fallbackAction?: string;
 	declare(world: World): Result<void, DeclareError>;
 	owns?(world: WorldView, id: EntityId): boolean;
 	observe(
@@ -209,6 +211,7 @@ export interface Transition {
 		ids: readonly EntityId[],
 		decisions: readonly Decision[],
 		rng: Rng,
+		graph?: GraphView,
 	): readonly Effect[];
 }
 
@@ -399,6 +402,7 @@ export interface PluginRegistry<T> {
 export interface Registry {
 	readonly actions: ActionRegistry;
 	readonly executors: PluginRegistry<Executor>;
+	readonly transitions: PluginRegistry<Transition>;
 	readonly modules: PluginRegistry<Module>;
 	readonly providers: PluginRegistry<DecisionProvider>;
 	readonly policies: PluginRegistry<ActivationPolicy>;

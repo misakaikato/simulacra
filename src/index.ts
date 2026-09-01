@@ -2,7 +2,7 @@ import { existsSync, readFileSync, statSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import pkg from "../package.json" with { type: "json" };
 import { registerBuiltinAdapters } from "./adapters";
-import { registerBuiltinExecutors } from "./agents";
+import { registerBuiltinExecutors, registerBuiltinTransitions } from "./agents";
 import { inspectRun, type InspectQuery, type InspectResult } from "./core/inspect";
 import type { Registry } from "./core/protocols";
 import { createRegistry } from "./core/registry";
@@ -15,6 +15,7 @@ import {
 } from "./core/run";
 import { err, ok } from "./core/result";
 import { digestRun, readRunScenario, runDirOfCheckpoint } from "./core/runDir";
+export { openRunLog, withRunLog } from "./core/runDir";
 import { parseScenarioYaml, resolveScenarioPlugins, type ScenarioIssue } from "./core/scenario";
 import type { GatewayFactory } from "./core/simulation";
 import type { AuditPlan, FailureInfo, Result, RunResult, Scenario } from "./core/types";
@@ -157,13 +158,26 @@ export {
 } from "./harness/conditions";
 export { LOG_FILE, RESULT_FILE } from "./core/run";
 export { CHECKPOINTS_DIR, SCENARIO_FILE } from "./core/runDir";
-export { createRuleProvider, type RuleFn } from "./providers/rule";
+export {
+	createRuleProvider,
+	ruleDecision,
+	thresholdRule,
+	type RuleFn,
+	type ThresholdRuleOptions,
+} from "./providers/rule";
 export { createMockProvider } from "./providers/mock";
 export { registerBuiltinModules } from "./modules";
 export { registerBuiltinMetrics } from "./metrics";
-export { registerBuiltinProviders } from "./providers";
+export { COHORT_RULE_KIND, registerBuiltinProviders } from "./providers";
 export { registerBuiltinPolicies } from "./policies";
-export { registerBuiltinExecutors } from "./agents";
+export type { Transition } from "./core/protocols";
+export {
+	COHORT_KIND,
+	CohortOptionsSchema,
+	registerBuiltinExecutors,
+	registerBuiltinTransitions,
+} from "./agents";
+export { OPINION_DYNAMICS_KIND, opinionDynamics } from "./agents/transitions";
 export { jsonlSink, prettySink } from "./logging/sinks";
 export type { AuditError, AuditOptions, AuditRun, AnalyzeOptions } from "./harness/runner";
 export {
@@ -215,6 +229,7 @@ export const createDefaultRegistry = (): Registry => {
 	const results = [
 		registerBuiltinPolicies(registry),
 		registerBuiltinProviders(registry),
+		registerBuiltinTransitions(registry),
 		registerBuiltinExecutors(registry),
 		registerBuiltinModules(registry),
 		registerBuiltinMetrics(registry),

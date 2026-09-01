@@ -150,7 +150,7 @@ export interface Simulation {
 
 interface AgentOutcome {
 	readonly decision: Decision;
-	readonly call: ActionCall;
+	readonly call?: ActionCall;
 }
 
 interface ExecutorSlot {
@@ -636,6 +636,7 @@ class KernelSimulation implements Simulation {
 				provider.name,
 				tickRng,
 				label,
+				executor,
 			);
 			return {
 				effects: outcomes.effects,
@@ -686,6 +687,7 @@ class KernelSimulation implements Simulation {
 				provider.name,
 				tickRng,
 				label,
+				executor,
 			);
 			return { effects: outcomes.effects, decisions: outcomes.decisions, batchFailed: true };
 		}
@@ -697,7 +699,7 @@ class KernelSimulation implements Simulation {
 			const result = results?.[i];
 			let outcome: AgentOutcome | undefined;
 			if (result !== undefined && result.ok && result.value.agentId === request.agentId) {
-				outcome = this.accept(result.value, request, provider.name);
+				outcome = this.accept(result.value, request, provider.name, executor);
 				if (outcome !== undefined) anyOk = true;
 			} else {
 				const failure: ProviderFailure =
@@ -720,11 +722,17 @@ class KernelSimulation implements Simulation {
 				);
 				if (failure.excType !== undefined && PARSE_FAILURE_TYPES.includes(failure.excType))
 					this.counts.parseFailures += 1;
-				outcome = this.fallback(request.agentId, request.observationEvent, provider.name);
+				outcome = this.fallback(
+					request.agentId,
+					request.observationEvent,
+					provider.name,
+					executor,
+				);
 			}
 			if (outcome === undefined) continue;
 			decisions.push(outcome.decision);
-			effects.push(...(await this.resolve(outcome.call, tickRng, label)));
+			if (outcome.call !== undefined)
+				effects.push(...(await this.resolve(outcome.call, tickRng, label)));
 		}
 		const executorEffects = await this.executorAct(
 			executor,
@@ -769,7 +777,10 @@ class KernelSimulation implements Simulation {
 		decision: Decision,
 		request: DecisionRequest,
 		providerName: string,
+		executor: Executor,
 	): AgentOutcome | undefined {
+		if (executor.resolvesOwnActions === true)
+			return this.acceptOwn(decision, request, providerName, executor);
 		const validated = this.registry.actions.validate({
 			agentId: decision.agentId,
 			name: decision.action,
@@ -794,11 +805,47 @@ class KernelSimulation implements Simulation {
 				{ agentId: decision.agentId, parent: request.observationEvent },
 			);
 			this.counts.parseFailures += 1;
-			return this.fallback(decision.agentId, request.observationEvent, providerName);
+			return this.fallback(
+				decision.agentId,
+				request.observationEvent,
+				providerName,
+				executor,
+			);
 		}
 		const event = this.decisionEvent(decision, providerName, request.observationEvent);
 		this.counts.ok += 1;
 		return { decision, call: { ...validated.value, cause: event.eventId } };
+	}
+
+	// Executors that resolve their own actions (batch transitions) bypass the action registry:
+	// the decision only has to name an action from the request's action space.
+	private acceptOwn(
+		decision: Decision,
+		request: DecisionRequest,
+		providerName: string,
+		executor: Executor,
+	): AgentOutcome | undefined {
+		if (!request.actionSpace.includes(decision.action)) {
+			this.recordFailure(
+				{
+					stage: "validate",
+					excType: FAILURE_TYPES.invalidAction,
+					message: `action '${decision.action}' is not in the action space of executor '${executor.name}'`,
+					retryable: false,
+				},
+				{ agentId: decision.agentId, parent: request.observationEvent },
+			);
+			this.counts.parseFailures += 1;
+			return this.fallback(
+				decision.agentId,
+				request.observationEvent,
+				providerName,
+				executor,
+			);
+		}
+		this.decisionEvent(decision, providerName, request.observationEvent);
+		this.counts.ok += 1;
+		return { decision };
 	}
 
 	private decisionEvent(decision: Decision, providerName: string, parent: EventId): Event {
@@ -824,8 +871,11 @@ class KernelSimulation implements Simulation {
 		agentId: EntityId,
 		parent: EventId,
 		providerName: string,
+		executor?: Executor,
 	): AgentOutcome | undefined {
 		this.counts.failed += 1;
+		if (executor?.resolvesOwnActions === true)
+			return this.fallbackOwn(agentId, parent, providerName, executor);
 		const def = this.registry.actions.fallback();
 		if (def === undefined) {
 			this.recordFailure(
@@ -869,19 +919,52 @@ class KernelSimulation implements Simulation {
 		return { decision, call: { ...validated.value, cause: event.eventId } };
 	}
 
+	private fallbackOwn(
+		agentId: EntityId,
+		parent: EventId,
+		providerName: string,
+		executor: Executor,
+	): AgentOutcome | undefined {
+		const action = executor.fallbackAction;
+		if (action === undefined) {
+			this.recordFailure(
+				{
+					stage: "fallback",
+					excType: FAILURE_TYPES.noFallbackAction,
+					message: `executor '${executor.name}' declares no fallback action`,
+					retryable: false,
+				},
+				{ agentId, parent },
+			);
+			return undefined;
+		}
+		const decision: Decision = {
+			agentId,
+			action,
+			args: {},
+			provenance: "rule",
+			cost: ZERO_COST,
+			parseOk: false,
+		};
+		this.decisionEvent(decision, providerName, parent);
+		return { decision };
+	}
+
 	private async fallbackAll(
 		targets: readonly { readonly agentId: EntityId; readonly parent: EventId }[],
 		providerName: string,
 		tickRng: Rng,
 		label: string,
+		executor: Executor,
 	): Promise<{ readonly effects: readonly Effect[]; readonly decisions: readonly Decision[] }> {
 		const effects: Effect[] = [];
 		const decisions: Decision[] = [];
 		for (const { agentId, parent } of targets) {
-			const outcome = this.fallback(agentId, parent, providerName);
+			const outcome = this.fallback(agentId, parent, providerName, executor);
 			if (outcome === undefined) continue;
 			decisions.push(outcome.decision);
-			effects.push(...(await this.resolve(outcome.call, tickRng, label)));
+			if (outcome.call !== undefined)
+				effects.push(...(await this.resolve(outcome.call, tickRng, label)));
 		}
 		return { effects, decisions };
 	}
@@ -906,7 +989,7 @@ class KernelSimulation implements Simulation {
 				{ agentId: call.agentId, parent },
 			);
 			const outcome = this.fallback(call.agentId, parent, MANUAL);
-			return outcome === undefined ? [] : this.resolve(outcome.call, tickRng, MANUAL);
+			return outcome?.call === undefined ? [] : this.resolve(outcome.call, tickRng, MANUAL);
 		}
 		const event = this.emit(
 			{

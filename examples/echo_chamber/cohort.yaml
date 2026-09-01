@@ -1,0 +1,56 @@
+scenarioId: echo_chamber_cohort
+seed: 7
+params:
+    n: 100000
+    rate: 0.2
+    activation: 0.5
+    threshold: 0
+population:
+    n: { $param: n }
+    fields:
+        - name: stance
+          dtype: f64
+          sampling: { kind: range, min: -2, max: 2 }
+        - name: stubbornness
+          dtype: f64
+          sampling: { kind: range, min: 0, max: 1 }
+modules:
+    - kind: socialGraph
+      options:
+          generator: powerlaw
+          meanDegree: 8
+          exponent: 2.4
+executors:
+    - kind: cohort
+      name: crowd
+      options:
+          provider: rule
+          features: [persona.stance]
+          neighborMean: persona.stance
+          virtualActions: [post, silent]
+          fallbackAction: silent
+          transition:
+              kind: opinionDynamics
+              options:
+                  rate: { $param: rate }
+                  stanceColumn: persona.stance
+                  stubbornnessColumn: persona.stubbornness
+providers:
+    rule:
+        kind: cohortRule
+        options:
+            threshold: { $param: threshold }
+            above: post
+            below: silent
+policy:
+    kind: bernoulli
+    options:
+        p: { $param: activation }
+instruments:
+    - { kind: columnMean, name: meanStance, options: { column: persona.stance }, every: 1 }
+    - kind: tvdToTarget
+      name: stanceSpread
+      options: { column: persona.stance, target: [1, 1, 1, 1], range: [-2, 2] }
+      every: 5
+steps:
+    - { kind: run, ticks: 20 }

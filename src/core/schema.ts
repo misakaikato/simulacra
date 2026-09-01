@@ -1,5 +1,6 @@
 import { z } from "zod";
-import type { JsonValue, Scalar } from "./types";
+import { MAP_KEY, PARAM_KEY, describeParamError, resolveParamRefs } from "./params";
+import type { JsonObject, JsonValue, Scalar } from "./types";
 
 export const JsonValueSchema: z.ZodType<JsonValue> = z.lazy(() =>
 	z.union([
@@ -21,6 +22,11 @@ export const ScalarSchema: z.ZodType<Scalar> = z.union([
 	z.null(),
 	z.array(z.string()),
 ]);
+
+export const ParamRefSchema = z.object({
+	[PARAM_KEY]: z.string().min(1),
+	[MAP_KEY]: z.record(z.string(), JsonValueSchema).optional(),
+});
 
 export const ColumnDtypeSchema = z.enum(["f64", "i32", "bool", "str", "strlist"]);
 
@@ -47,12 +53,22 @@ export const PopulationSourceSchema = z.discriminatedUnion("kind", [
 	z.object({ kind: z.literal("json"), path: z.string().min(1) }),
 ]);
 
-export const PopulationSpecSchema = z.object({
-	n: z.number().int().positive(),
+const PopulationSize = z.number().int().positive();
+
+const PopulationFields = {
 	fields: z.array(PersonaFieldSchema).default([]),
 	source: PopulationSourceSchema.default({ kind: "synthetic" }),
 	provenance: z.enum(["demographic", "survey", "interview", "synthetic"]).default("synthetic"),
 	stratify: z.record(z.string(), z.record(z.string(), z.number())).optional(),
+};
+
+export const PopulationSpecSchema = z.object({ n: PopulationSize, ...PopulationFields });
+
+// In a scenario document the population size may reference a scenario param;
+// the reference is resolved while the scenario is parsed so that Scenario.population.n is a number.
+const PopulationSpecInputSchema = z.object({
+	n: z.union([PopulationSize, ParamRefSchema]),
+	...PopulationFields,
 });
 
 export const PluginSpecSchema = z.object({
@@ -130,13 +146,13 @@ export const PromptOptionsSchema = z.object({
 	contextWindow: z.number().int().positive().default(4000),
 });
 
-export const ScenarioSchema = z.object({
+const ScenarioObjectSchema = z.object({
 	scenarioId: z.string().min(1),
 	replicationId: z.number().int().nonnegative().default(0),
 	seed: z.number().int(),
 	seedPath: z.array(z.number().int()).default([]),
 	params: JsonObjectSchema.default({}),
-	population: PopulationSpecSchema,
+	population: PopulationSpecInputSchema,
 	modules: z.array(ModuleSpecSchema).default([]),
 	executors: z.array(ExecutorSpecSchema).default([]),
 	providers: z.record(z.string(), ProviderSpecSchema).default({}),
@@ -147,6 +163,38 @@ export const ScenarioSchema = z.object({
 	prompt: PromptOptionsSchema.prefault({}),
 	plugins: z.array(z.string().min(1)).optional(),
 });
+
+type ScenarioInput = z.output<typeof ScenarioObjectSchema>;
+type ScenarioOutput = Omit<ScenarioInput, "population"> & {
+	readonly population: z.output<typeof PopulationSpecSchema>;
+};
+
+const POPULATION_SIZE_PATH = ["population", "n"];
+
+const resolvePopulationSize = (scenario: ScenarioInput, ctx: z.RefinementCtx): ScenarioOutput => {
+	const { n, ...population } = scenario.population;
+	if (typeof n === "number") return { ...scenario, population: { ...population, n } };
+	const map = n[MAP_KEY];
+	const ref: JsonObject = {
+		[PARAM_KEY]: n[PARAM_KEY],
+		...(map === undefined ? {} : { [MAP_KEY]: map }),
+	};
+	const resolved = resolveParamRefs(ref, scenario.params, POPULATION_SIZE_PATH.join("."));
+	const value = resolved.ok ? resolved.value : undefined;
+	if (typeof value === "number" && Number.isInteger(value) && value > 0)
+		return { ...scenario, population: { ...population, n: value } };
+	ctx.addIssue({
+		code: "custom",
+		path: POPULATION_SIZE_PATH,
+		message: resolved.ok
+			? `must resolve to a positive integer, got ${JSON.stringify(value)}`
+			: describeParamError(resolved.error),
+		input: n,
+	});
+	return { ...scenario, population: { ...population, n: 0 } };
+};
+
+export const ScenarioSchema = ScenarioObjectSchema.transform(resolvePopulationSize);
 
 export const ArmSchema = z.object({
 	name: z.string().min(1),

@@ -5,11 +5,13 @@ import { err, ok } from "../core/result";
 import type { PluginSpec, Result } from "../core/types";
 import { createLlmProvider } from "./llm";
 import { createMockProvider } from "./mock";
-import { createRuleProvider, type RuleFn } from "./rule";
+import { createRuleProvider, thresholdRule, type RuleFn } from "./rule";
 
 export interface ProviderDeps {
 	readonly rules?: Readonly<Record<string, RuleFn>>;
 }
+
+export const COHORT_RULE_KIND = "cohortRule";
 
 const LlmOptions = z.object({
 	temperature: z.number().min(0).default(0),
@@ -19,6 +21,13 @@ const LlmOptions = z.object({
 });
 
 const RuleOptions = z.object({ rule: z.string().min(1) });
+
+export const CohortRuleOptionsSchema = z.object({
+	feature: z.number().int().nonnegative().default(0),
+	threshold: z.number().default(0),
+	above: z.string().min(1).default("post"),
+	below: z.string().min(1).default("silent"),
+});
 
 const nameOf = (spec: PluginSpec): string => spec.name ?? spec.kind;
 
@@ -44,6 +53,20 @@ export const registerBuiltinProviders = (
 					});
 				return ok(
 					createRuleProvider({ name: nameOf(spec), seed: ctx.scenario.seed, rule }),
+				);
+			},
+		],
+		[
+			COHORT_RULE_KIND,
+			(spec, ctx) => {
+				const o = parseOptions(providers.slot, spec, CohortRuleOptionsSchema);
+				if (!o.ok) return o;
+				return ok(
+					createRuleProvider({
+						name: nameOf(spec),
+						seed: ctx.scenario.seed,
+						rule: thresholdRule(o.value),
+					}),
 				);
 			},
 		],

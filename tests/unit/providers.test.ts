@@ -438,7 +438,12 @@ describe("registerBuiltinProviders", () => {
 			},
 		});
 		expect(registered.ok).toBe(true);
-		expect([...registry.providers.kinds()].sort()).toEqual(["llm", "mock", "rule"]);
+		expect([...registry.providers.kinds()].sort()).toEqual([
+			"cohortRule",
+			"llm",
+			"mock",
+			"rule",
+		]);
 		const ctx: PluginContext = {
 			scenario: scenario({}),
 			registry,
