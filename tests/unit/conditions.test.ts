@@ -218,12 +218,13 @@ describe("generateConditions", () => {
 		for (const c of r.value) expect(baselineOf(r.value, c)).toBe(base);
 	});
 
-	test("full_factorial yields the cartesian product and crosses with models", () => {
+	test("full_factorial yields base plus the cartesian product and crosses with models", () => {
 		const factorial = generateConditions(planWith({ design: "full_factorial" }));
 		expect(factorial.ok).toBe(true);
 		if (!factorial.ok) return;
-		expect(factorial.value).toHaveLength(3 * 2);
+		expect(factorial.value).toHaveLength(1 + 3 * 2);
 		expect(factorial.value.map((c) => c.conditionId)).toEqual([
+			"base",
 			"homophily=0|feedSize=0",
 			"homophily=0|feedSize=1",
 			"homophily=1|feedSize=0",
@@ -234,7 +235,10 @@ describe("generateConditions", () => {
 		expect(
 			factorial.value.filter((c) => c.flags !== undefined).map((c) => c.conditionId),
 		).toEqual(["homophily=1|feedSize=0"]);
-		expect(factorial.value.some(isBaseCondition)).toBe(false);
+		const base = factorial.value[0];
+		expect(base !== undefined && isBaseCondition(base)).toBe(true);
+		expect(factorial.value.filter(isBaseCondition)).toHaveLength(1);
+		for (const c of factorial.value) expect(baselineOf(factorial.value, c)).toBe(base);
 		const crossed = generateConditions(planWith({ models: ["m1", "m2"] }));
 		expect(crossed.ok).toBe(true);
 		if (!crossed.ok) return;
@@ -281,7 +285,8 @@ describe("generateConditions", () => {
 		expect(first).toEqual(second);
 		const axes = plan.axes;
 		expect(assignmentsOf(axes, "one_at_a_time")).toHaveLength(6);
-		expect(assignmentsOf(axes, "full_factorial")).toHaveLength(6);
+		expect(assignmentsOf(axes, "full_factorial")).toHaveLength(7);
+		expect(assignmentsOf([], "full_factorial")).toEqual([[]]);
 		expect(conditionIdOf(axes, [{ axis: 1, level: 1 }], "z")).toBe("feedSize=1@z");
 		expect(conditionIdOf(axes, [])).toBe("base");
 	});

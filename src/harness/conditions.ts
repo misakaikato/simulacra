@@ -30,13 +30,15 @@ export const assignmentsOf = (
 	design: AuditPlan["design"],
 ): readonly Assignment[] => {
 	if (design === "one_at_a_time") return [[], ...axes.flatMap(levelsOf)];
-	return axes.reduce<readonly Assignment[]>(
+	if (axes.length === 0) return [[]];
+	const product = axes.reduce<readonly Assignment[]>(
 		(partials, axis, index) =>
 			partials.flatMap((partial) =>
 				axis.levels.map((_, level): Assignment => [...partial, { axis: index, level }]),
 			),
 		[[]],
 	);
+	return [[], ...product];
 };
 
 export const conditionIdOf = (

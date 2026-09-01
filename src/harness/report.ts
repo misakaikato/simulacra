@@ -6,6 +6,7 @@ import type {
 	PairwiseTest,
 	RunResult,
 } from "../core/types";
+import { baselineOf, isBaseCondition } from "./conditions";
 
 const ESCAPES: Readonly<Record<string, string>> = {
 	"&": "&amp;",
@@ -70,6 +71,7 @@ interface ConditionSummary {
 	readonly runs: number;
 	readonly succeeded: number;
 	readonly complete: number;
+	readonly usable: number;
 	readonly means: Readonly<Record<string, number>>;
 }
 
@@ -100,6 +102,7 @@ const summarizeConditions = (report: AuditReport): readonly ConditionSummary[] =
 			runs: results.length,
 			succeeded: results.filter((r) => r.status === "succeeded").length,
 			complete: results.filter((r) => r.integrity.complete).length,
+			usable: usable.length,
 			means,
 		};
 	});
@@ -191,10 +194,29 @@ const pairwiseRow = (t: PairwiseTest): string =>
 	cell(mono(formatNumber(t.holmP)), true) +
 	cell(t.directionFlip ? `<span class="flag">flip</span>` : "");
 
+const pairwiseNote = (report: AuditReport): string => {
+	const summaries = summarizeConditions(report);
+	const usableOf = new Map(summaries.map((s) => [s.condition.conditionId, s.usable] as const));
+	const perturbed = summaries.filter((s) => !isBaseCondition(s.condition));
+	if (perturbed.length === 0)
+		return "no pairwise tests (no perturbation conditions to compare against the baseline)";
+	if (report.plan.metrics.length === 0) return "no pairwise tests (no metrics)";
+	const comparable = perturbed.some((s) => {
+		const baseline = baselineOf(report.conditions, s.condition);
+		return (
+			s.usable >= 2 &&
+			baseline !== undefined &&
+			(usableOf.get(baseline.conditionId) ?? 0) >= 2
+		);
+	});
+	return comparable
+		? "no pairwise tests (the usable runs report no values for the plan's metrics)"
+		: "no pairwise tests (fewer than 2 usable replications per condition)";
+};
+
 const pairwiseSection = (report: AuditReport): string => {
 	const metrics = [...new Set(report.pairwise.map((t) => t.metric))];
-	if (metrics.length === 0)
-		return `<p class="muted">no pairwise tests (fewer than 2 usable replications per condition)</p>`;
+	if (metrics.length === 0) return `<p class="muted">${escapeHtml(pairwiseNote(report))}</p>`;
 	return metrics
 		.map((metric) => {
 			const rows = [...report.pairwise.filter((t) => t.metric === metric)]
