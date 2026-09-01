@@ -853,3 +853,16 @@ simulacra/
 - `full_factorial` 设计同样包含 `base` 条件（axisValues 为空），成对检验以它为基线；报告不再出现"无成对检验"的误导文案。
 - `audit --overwrite` 删除整个输出目录（文档中写明）；`import-oasis --overwrite` 只删导入器自身产物。
 - `import-oasis --metrics` 只接受指标名；需要 options 的指标走 API 的 `InstrumentSpec`。
+
+## 附录 G：D 阶段裁定的细节
+
+- 运行注册表 `createRunRegistry({ dataDir, logger })`：目录 `runs/<runId 冒号替换为 __>/`、`audits/<planHash 前 12 位 或用户命名>/`；进度由 `activation` 事件推进，审计按完成 run 计数；`subscribe`/`subscribeAudit` 为事件总线。
+- 事件总线 `src/core/bus.ts` 的 `observableLog(log, emit)`；`RunOptions.onEvent` 与 `SimulationDeps.onEvent`。
+- `replayWorld(runDir, tick)` 返回任意 tick 开始时的 `WorldView`，供 `agents`、`graph?tick` 路由；tick 超出或省略时返回最终状态并回填实际 tick。
+- `renderInspect` 从 CLI 移入 `core/inspect.ts`，CLI 与 MCP 共用。
+- POST 的 YAML 文本若与某内置示例逐字相同，插件按该示例目录解析，否则按 cwd；MCP 用显式 `example`/`examplePlan` 参数。
+- MCP `run_audit` 同步等待完成后返回摘要；`get_audit` 返回浓缩报告，完整报告走资源 `simulacra://audits/{id}/report`。
+- `GET /api/runs/:id/agents` 只给 `persona.*` 公开列加 `decisions`、`failures`。
+- 审计自动 id 不含 provider，同计划换 provider 需显式 `name`。
+- `serve` 固定绑定 `127.0.0.1`，`--port 0` 可用并打印实际地址。
+- 空成对检验表按真实原因提示：无扰动条件 / 无指标 / 可用复制不足 2。
