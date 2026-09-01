@@ -197,6 +197,32 @@ export {
 	createCacheProvider,
 	type CacheProviderOptions,
 } from "./providers/cache";
+export {
+	TOPO_KIND,
+	TopoOptionsSchema,
+	buildCells,
+	createTopoProvider,
+	execDistance,
+	exposureHistogram,
+	profilesOf,
+	type AgentProfile,
+	type Cell,
+	type TopoProvider,
+	type TopoProviderOptions,
+} from "./providers/routers/topo";
+export {
+	APS_KIND,
+	ApsOptionsSchema,
+	apportion,
+	createApsProvider,
+	interpolate,
+	miniBatchKMeans,
+	projectToSimplex,
+	tailScores,
+	type ApsProvider,
+	type ApsProviderOptions,
+	type ApsReport,
+} from "./providers/routers/aps";
 export { registerBuiltinModules } from "./modules";
 export { registerBuiltinMetrics } from "./metrics";
 export { COHORT_RULE_KIND, downstreamOf, registerBuiltinProviders } from "./providers";
