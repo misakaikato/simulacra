@@ -1,10 +1,12 @@
 import { useEffect, useState } from "react";
+import { Audit } from "./pages/Audit";
 import { Run } from "./pages/Run";
 import { Runs } from "./pages/Runs";
 
 type Route =
 	| { readonly page: "runs" }
 	| { readonly page: "run"; readonly id: string }
+	| { readonly page: "audit"; readonly id: string }
 	| { readonly page: "missing"; readonly hash: string };
 
 const parseRoute = (hash: string): Route => {
@@ -16,6 +18,7 @@ const parseRoute = (hash: string): Route => {
 	const [head, id] = parts;
 	if (head === undefined || (head === "runs" && parts.length === 1)) return { page: "runs" };
 	if (head === "runs" && id !== undefined && parts.length === 2) return { page: "run", id };
+	if (head === "audits" && id !== undefined && parts.length === 2) return { page: "audit", id };
 	return { page: "missing", hash };
 };
 
@@ -35,6 +38,8 @@ const Page = ({ route }: { readonly route: Route }) => {
 			return <Runs />;
 		case "run":
 			return <Run id={route.id} />;
+		case "audit":
+			return <Audit id={route.id} />;
 		case "missing":
 			return (
 				<div className="page">
@@ -58,6 +63,7 @@ export const App = () => {
 					Runs
 				</a>
 				{route.page === "run" && <span className="crumb mono">{route.id}</span>}
+				{route.page === "audit" && <span className="crumb mono">audit {route.id}</span>}
 			</nav>
 			<main className="main">
 				<Page route={route} />
