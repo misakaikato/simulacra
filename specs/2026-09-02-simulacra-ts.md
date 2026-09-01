@@ -847,3 +847,9 @@ simulacra/
 - 插件层之间允许引用列名常量（如 `adapters/oasis.ts` 引用 `modules/posts.ts`、`modules/socialGraph.ts`）；分层限制只针对 `core/` 与入口目录。
 - 工具链忽略 `.claude/worktrees/`（eslint、prettier、git）。
 - mock 提供者的 id 参数：`*Id` 取含 `id` 的对象数组（键名含字段词干者优先），`target` 取字符串数组；无候选时占位符。回音室 mock 下仍有少量 `ActionRejected`（feed 为空时），属预期。
+
+## 附录 F：B 阶段验收后的裁定
+
+- `full_factorial` 设计同样包含 `base` 条件（axisValues 为空），成对检验以它为基线；报告不再出现"无成对检验"的误导文案。
+- `audit --overwrite` 删除整个输出目录（文档中写明）；`import-oasis --overwrite` 只删导入器自身产物。
+- `import-oasis --metrics` 只接受指标名；需要 options 的指标走 API 的 `InstrumentSpec`。
