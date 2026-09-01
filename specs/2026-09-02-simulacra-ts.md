@@ -834,3 +834,16 @@ simulacra/
 - 错误体：校验失败 `400 { issues: [{ path, message }] }`；其它 `{ error: string }`。
 - 路径参数 URL 编码（runId 含冒号），服务端解码。
 - GUI 的 Runs 页同时列出 audits，因此 `GET /api/audits` 为必需。
+
+## 附录 E：B 阶段裁定的细节
+
+- `planHash` 排除 `concurrency`；conditionId 只在 `models` 非空时追加 `@model`；`identicalToBase` 以模型覆盖前的 `scenarioHash` 相等判定。
+- 运行器把条件场景的 `scenarioId` 改为 `<id>#<conditionId>` 保证 runId 唯一；`AuditReport` 扩展 `plan`（摘要）、`options`、`runIndex`；`Condition.flags`；`DistributionTest.tvdBase`。
+- 审计对 `llm` 提供者强制 `temperature: 0`。
+- 统计退化值：样本先滤 NaN；空样本 mean 0、CI [0,0]、p 1；pooled sd 为 0 且均值不等时 Cohen d 为 ±Infinity（JSON 落 null，HTML 显示 inf）；无轴时 evidenceGrade weak；`directionFlip` 依据 `hypothesis.outcomes` 的 `direction`，无假设时恒 false。
+- 分布检验：有 `targetDistribution` 时用等宽直方图（bin 数 = target 长度，范围取两组并集）算归一化 TVD，写 `tvd` 与 `tvdBase`。
+- `audit` 命令有 run 失败仍退出 0 并打印失败数；审计日志 `<out>/log.jsonl`。
+- OASIS 导入：`importOasis(dbPath, outDir, metrics, registry, { logger, overwrite })`，`metrics` 接受名字或 `InstrumentSpec`；从 `follow` 表落 `edge` 表；另写 `scenario.json`、`world.json`。fixture 只提交 SQL（`tests/fixtures/oasis_min.sql`），验收标准 11 的 `.db` 由测试或验收方从 SQL 临时生成。
+- 插件层之间允许引用列名常量（如 `adapters/oasis.ts` 引用 `modules/posts.ts`、`modules/socialGraph.ts`）；分层限制只针对 `core/` 与入口目录。
+- 工具链忽略 `.claude/worktrees/`（eslint、prettier、git）。
+- mock 提供者的 id 参数：`*Id` 取含 `id` 的对象数组（键名含字段词干者优先），`target` 取字符串数组；无候选时占位符。回音室 mock 下仍有少量 `ActionRejected`（feed 为空时），属预期。
