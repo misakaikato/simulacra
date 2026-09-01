@@ -231,6 +231,29 @@ export {
 	registerBuiltinAdapters,
 } from "./adapters";
 export * as stats from "./harness/stats";
+export type {
+	AuditMessage,
+	AuditProgress,
+	AuditSummary,
+	RunMessage,
+	RunProgress,
+	RunRegistry,
+	RunRegistryOptions,
+	RunStatus,
+	RunSummary,
+	StartAuditError,
+	StartAuditInput,
+	StartRunError,
+	StartRunInput,
+} from "./runRegistry";
+export {
+	AUDITS_DATA_DIR,
+	DEFAULT_DATA_DIR,
+	RUNS_DATA_DIR,
+	createRunRegistry,
+	runDirName,
+	totalTicks,
+} from "./runRegistry";
 
 export const version: string = pkg.version;
 
