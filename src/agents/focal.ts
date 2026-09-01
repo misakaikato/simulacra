@@ -18,7 +18,7 @@ import type {
 	WorldView,
 } from "../core/protocols";
 import { parseOptions } from "../core/registry";
-import { JsonValueSchema, ScalarSchema } from "../core/schema";
+import { JsonValueSchema } from "../core/schema";
 import { err, ok } from "../core/result";
 import { keyFromLabel } from "../core/rng";
 import type {
@@ -38,12 +38,13 @@ import type {
 import type { Logger } from "../logging/logger";
 import { CONTEXT_KEYS } from "./components";
 import { memoryEntriesOf } from "./components/shared";
+import { WhereSchema, matchesWhere, type Where } from "./where";
 
 export const FocalOptionsSchema = z.object({
 	entity: z.string().min(1).default("agent"),
 	provider: z.string().min(1),
 	actions: z.array(z.string().min(1)).optional(),
-	where: z.record(z.string().min(1), ScalarSchema).optional(),
+	where: WhereSchema.optional(),
 });
 
 const RESERVED_KEYS: readonly string[] = [
@@ -75,9 +76,6 @@ const isScalar = (v: JsonValue): v is Scalar =>
 
 const scalarJson = (v: Scalar): JsonValue => (Array.isArray(v) ? [...v] : v);
 
-const sameScalar = (a: Scalar | undefined, b: Scalar): boolean =>
-	a !== undefined && JSON.stringify(a) === JSON.stringify(b);
-
 const personaOf = (value: JsonValue | undefined): Readonly<Record<string, Scalar>> => {
 	if (typeof value !== "object" || value === null || Array.isArray(value)) return {};
 	const out: Record<string, Scalar> = {};
@@ -95,7 +93,7 @@ class FocalExecutor implements Executor {
 	private readonly ctx: PluginContext;
 	private readonly components: readonly Component[];
 	private readonly actionFilter: readonly string[] | undefined;
-	private readonly where: Readonly<Record<string, Scalar>> | undefined;
+	private readonly where: Where | undefined;
 	private readonly runId: RunId;
 	private readonly logger: Logger;
 	private stash: TickStash | undefined;
@@ -134,11 +132,7 @@ class FocalExecutor implements Executor {
 
 	owns(world: WorldView, id: EntityId): boolean {
 		if (this.where === undefined) return true;
-		const row = world.row(this.entity, id);
-		if (row === undefined) return false;
-		return Object.entries(this.where).every(([column, value]) =>
-			sameScalar(row[column], value),
-		);
+		return matchesWhere(world.row(this.entity, id), this.where);
 	}
 
 	async observe(

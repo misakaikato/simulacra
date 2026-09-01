@@ -1,4 +1,4 @@
-import { registerBuiltinExecutors } from "../../src/agents";
+import { registerBuiltinExecutors, registerBuiltinTransitions } from "../../src/agents";
 import type { Registry } from "../../src/core/protocols";
 import { createRegistry } from "../../src/core/registry";
 import { registerBuiltinMetrics } from "../../src/metrics";
@@ -11,6 +11,7 @@ export const builtinRegistry = (): Registry => {
 	const results = [
 		registerBuiltinPolicies(registry),
 		registerBuiltinProviders(registry),
+		registerBuiltinTransitions(registry),
 		registerBuiltinExecutors(registry),
 		registerBuiltinModules(registry),
 		registerBuiltinMetrics(registry),
