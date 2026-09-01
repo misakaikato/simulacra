@@ -165,15 +165,27 @@ class MockProvider implements DecisionProvider {
 		const key = req.prompt?.hash ?? canonicalJson(req.observation);
 		const action =
 			req.actionSpace[indexFromHash(hashOf([key, ctx.seedPath]), req.actionSpace.length)];
-		const def = action === undefined ? undefined : this.actions.get(action);
-		if (action === ANSWER_ACTION && def === undefined) return this.answer(req, key, ctx);
-		if (action === undefined || def === undefined)
+		if (action === undefined)
 			return err({
 				agentId: req.agentId,
-				reason: `action '${String(action)}' is not registered`,
+				reason: "action space yielded no action",
 				retryable: false,
 				excType: FAILURE_TYPES.invalidAction,
 			});
+		const def = this.actions.get(action);
+		if (action === ANSWER_ACTION && def === undefined) return this.answer(req, key, ctx);
+		// Actions outside the registry are virtual (batch executors resolve them): no args to build.
+		if (def === undefined) {
+			this.decided += 1;
+			return ok({
+				agentId: req.agentId,
+				action,
+				args: {},
+				provenance: "rule",
+				cost: ZERO_COST,
+				parseOk: true,
+			});
+		}
 		const example = exampleFromJsonSchema(zodToJsonSchema(def.params));
 		const args = withCandidateIds(isObject(example) ? example : {}, req.observation, [
 			key,

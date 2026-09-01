@@ -303,6 +303,22 @@ describe("cohort executor in the kernel", () => {
 		}
 	});
 
+	test("the mock provider treats virtual actions as argument-free decisions", async () => {
+		const sim = build(
+			cohortScenario(40, (s) => ({ ...s, providers: { rule: { kind: "mock" } } })),
+		);
+		await runTicks(sim, 2);
+		const integrity = sim.integrity();
+		expect(integrity.complete).toBe(true);
+		expect(integrity.failed).toBe(0);
+		const actions = new Set(
+			sim.log
+				.query({ kind: ["decision"] })
+				.map((d) => (d.kind === "decision" ? d.payload.action : "")),
+		);
+		expect([...actions].every((a) => a === "post" || a === "silent")).toBe(true);
+	});
+
 	test("cohortRule thresholds the first feature", async () => {
 		const registry = builtinRegistry();
 		const ctx = {
