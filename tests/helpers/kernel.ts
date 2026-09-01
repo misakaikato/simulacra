@@ -9,6 +9,7 @@ import { err, ok } from "../../src/core/result";
 import { parseScenario } from "../../src/core/scenario";
 import type { GatewayFactory } from "../../src/core/simulation";
 import type { Decision, DecisionRequest, JsonObject, Scenario } from "../../src/core/types";
+import { registerBuiltinInstruments } from "../../src/instruments";
 import { createGateway } from "../../src/llm/gateway";
 import { registerBuiltinPolicies } from "../../src/policies";
 import { registerBuiltinProviders } from "../../src/providers";
@@ -201,6 +202,7 @@ export const kernelRegistry = (): KernelFixture => {
 	registerBuiltinPolicies(registry);
 	registerBuiltinProviders(registry);
 	registerBuiltinExecutors(registry);
+	registerBuiltinInstruments(registry);
 	registry.providers.register("scripted", (spec) =>
 		ok(scriptedProvider(spec.name ?? "scripted", () => fixture.behaviour)),
 	);

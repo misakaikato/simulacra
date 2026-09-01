@@ -25,4 +25,7 @@ export const CONTEXT_KEYS = {
 	memory: "memory",
 	feed: "feed",
 	neighbors: "neighbors",
+	intervention: "intervention",
 } as const;
+
+export const INTERVENTION_INSTRUCTION_KEY = "instruction";

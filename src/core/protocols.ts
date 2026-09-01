@@ -160,6 +160,8 @@ export interface Executor {
 	readonly name: string;
 	readonly entity: string;
 	readonly provider: string;
+	readonly resolvesOwnActions?: boolean;
+	readonly fallbackAction?: string;
 	declare(world: World): Result<void, DeclareError>;
 	owns?(world: WorldView, id: EntityId): boolean;
 	observe(
@@ -172,6 +174,16 @@ export interface Executor {
 	): Promise<readonly DecisionRequest[]>;
 	act(decisions: readonly Decision[], ctx: ResolveContext): Promise<readonly Effect[]>;
 	after(decisions: readonly Decision[], report: EffectReport, log: EventLog): Promise<void>;
+	// Questionnaire requests rendered with the executor's own components; executors without
+	// this hook are interviewed with a bare request built by the kernel.
+	interview?(
+		world: WorldView,
+		ids: readonly EntityId[],
+		t: LogicalTime,
+		log: EventLog,
+		rng: Rng,
+		questionnaire: Questionnaire,
+	): Promise<readonly DecisionRequest[]>;
 	getState(): JsonValue;
 	setState(s: JsonValue): void;
 }
@@ -209,6 +221,7 @@ export interface Transition {
 		ids: readonly EntityId[],
 		decisions: readonly Decision[],
 		rng: Rng,
+		graph?: GraphView,
 	): readonly Effect[];
 }
 
@@ -334,14 +347,16 @@ export interface Metric {
 	compute(view: WorldView, log: EventLog, runId: RunId): number | readonly number[];
 }
 
+export interface Question {
+	readonly id: string;
+	readonly prompt: string;
+	readonly responseType: "text" | "integer" | "float" | "choice";
+	readonly choices?: readonly string[];
+}
+
 export interface Questionnaire {
 	readonly name: string;
-	readonly questions: readonly {
-		readonly id: string;
-		readonly prompt: string;
-		readonly responseType: "text" | "integer" | "float" | "choice";
-		readonly choices?: readonly string[];
-	}[];
+	readonly questions: readonly Question[];
 	readonly entersMemory: boolean;
 }
 
@@ -362,6 +377,9 @@ export interface PluginContext {
 	readonly registry: Registry;
 	readonly logger: Logger;
 	readonly gateway?: LLMGateway;
+	// Resolves a provider declared in the scenario by name; composite providers use it for
+	// their downstream. The simulation memoises instances and rejects cycles.
+	readonly provider?: (name: string) => Result<DecisionProvider, PluginError>;
 }
 
 export type PluginError =
@@ -399,9 +417,11 @@ export interface PluginRegistry<T> {
 export interface Registry {
 	readonly actions: ActionRegistry;
 	readonly executors: PluginRegistry<Executor>;
+	readonly transitions: PluginRegistry<Transition>;
 	readonly modules: PluginRegistry<Module>;
 	readonly providers: PluginRegistry<DecisionProvider>;
 	readonly policies: PluginRegistry<ActivationPolicy>;
 	readonly metrics: PluginRegistry<Metric>;
+	readonly instruments: PluginRegistry<Questionnaire>;
 	readonly adapters: PluginRegistry<Adapter>;
 }

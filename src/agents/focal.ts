@@ -12,13 +12,21 @@ import type {
 	ModuleObservations,
 	PluginContext,
 	PluginError,
+	Questionnaire,
 	ResolveContext,
 	Rng,
 	World,
 	WorldView,
 } from "../core/protocols";
+import {
+	ANSWER_ACTION,
+	QUESTIONNAIRE_KEY,
+	answerActionSummary,
+	questionnaireInstruction,
+	questionnaireObservation,
+} from "../core/questionnaire";
 import { parseOptions } from "../core/registry";
-import { JsonValueSchema, ScalarSchema } from "../core/schema";
+import { JsonValueSchema } from "../core/schema";
 import { err, ok } from "../core/result";
 import { keyFromLabel } from "../core/rng";
 import type {
@@ -38,12 +46,13 @@ import type {
 import type { Logger } from "../logging/logger";
 import { CONTEXT_KEYS } from "./components";
 import { memoryEntriesOf } from "./components/shared";
+import { WhereSchema, matchesWhere, type Where } from "./where";
 
 export const FocalOptionsSchema = z.object({
 	entity: z.string().min(1).default("agent"),
 	provider: z.string().min(1),
 	actions: z.array(z.string().min(1)).optional(),
-	where: z.record(z.string().min(1), ScalarSchema).optional(),
+	where: WhereSchema.optional(),
 });
 
 const RESERVED_KEYS: readonly string[] = [
@@ -51,6 +60,7 @@ const RESERVED_KEYS: readonly string[] = [
 	CONTEXT_KEYS.name,
 	CONTEXT_KEYS.instructions,
 	CONTEXT_KEYS.memory,
+	CONTEXT_KEYS.intervention,
 ];
 
 const StateSchema = z.object({ components: z.array(JsonValueSchema) });
@@ -58,6 +68,14 @@ const StateSchema = z.object({ components: z.array(JsonValueSchema) });
 interface TickStash {
 	readonly t: LogicalTime;
 	readonly rng: Rng;
+}
+
+// Extra prompt material for a questionnaire round; `attribute` false keeps the interview
+// events off the agent's own timeline so memory components do not pick them up.
+interface InterviewExtra {
+	readonly observation: JsonObject;
+	readonly instructions: string;
+	readonly attribute: boolean;
 }
 
 const matchesPattern = (pattern: string, key: string): boolean =>
@@ -74,9 +92,6 @@ const isScalar = (v: JsonValue): v is Scalar =>
 	(Array.isArray(v) && v.every((x) => typeof x === "string"));
 
 const scalarJson = (v: Scalar): JsonValue => (Array.isArray(v) ? [...v] : v);
-
-const sameScalar = (a: Scalar | undefined, b: Scalar): boolean =>
-	a !== undefined && JSON.stringify(a) === JSON.stringify(b);
 
 const personaOf = (value: JsonValue | undefined): Readonly<Record<string, Scalar>> => {
 	if (typeof value !== "object" || value === null || Array.isArray(value)) return {};
@@ -95,7 +110,7 @@ class FocalExecutor implements Executor {
 	private readonly ctx: PluginContext;
 	private readonly components: readonly Component[];
 	private readonly actionFilter: readonly string[] | undefined;
-	private readonly where: Readonly<Record<string, Scalar>> | undefined;
+	private readonly where: Where | undefined;
 	private readonly runId: RunId;
 	private readonly logger: Logger;
 	private stash: TickStash | undefined;
@@ -134,11 +149,7 @@ class FocalExecutor implements Executor {
 
 	owns(world: WorldView, id: EntityId): boolean {
 		if (this.where === undefined) return true;
-		const row = world.row(this.entity, id);
-		if (row === undefined) return false;
-		return Object.entries(this.where).every(([column, value]) =>
-			sameScalar(row[column], value),
-		);
+		return matchesWhere(world.row(this.entity, id), this.where);
 	}
 
 	async observe(
@@ -155,17 +166,73 @@ class FocalExecutor implements Executor {
 			for (const agentId of ids) this.noActions(agentId, t, log, rng);
 			return [];
 		}
-		const summaries = this.actionSummaries(actionSpace);
+		return this.requestsFor(
+			world,
+			ids,
+			t,
+			log,
+			rng,
+			observations,
+			actionSpace,
+			this.actionSummaries(actionSpace),
+		);
+	}
+
+	async interview(
+		world: WorldView,
+		ids: readonly EntityId[],
+		t: LogicalTime,
+		log: EventLog,
+		rng: Rng,
+		questionnaire: Questionnaire,
+	): Promise<readonly DecisionRequest[]> {
+		this.stash = { t, rng };
+		return this.requestsFor(
+			world,
+			ids,
+			t,
+			log,
+			rng,
+			undefined,
+			[ANSWER_ACTION],
+			[answerActionSummary(questionnaire)],
+			{
+				observation: { [QUESTIONNAIRE_KEY]: questionnaireObservation(questionnaire) },
+				instructions: questionnaireInstruction(questionnaire),
+				attribute: questionnaire.entersMemory,
+			},
+		);
+	}
+
+	private requestsFor(
+		world: WorldView,
+		ids: readonly EntityId[],
+		t: LogicalTime,
+		log: EventLog,
+		rng: Rng,
+		observations: ModuleObservations | undefined,
+		actionSpace: readonly string[],
+		summaries: readonly ActionSummary[],
+		interview?: InterviewExtra,
+	): readonly DecisionRequest[] {
 		const requests: DecisionRequest[] = [];
+		const attributed = interview === undefined || interview.attribute;
 		for (const agentId of ids) {
 			const context = this.buildContext(agentId, world, t, log, observations?.get(agentId));
-			const input = this.promptInput(agentId, context, summaries);
+			const input = this.promptInput(agentId, context, summaries, interview);
 			const rendered = renderPrompt(input, this.ctx.scenario.prompt);
 			const contentSha = log.putContent(promptText(input, rendered));
 			const eventId = newEventId(rng);
 			log.append(
 				makeEvent(
-					{ eventId, runId: this.runId, t, seedPath: rng.path, agentId },
+					{
+						eventId,
+						runId: this.runId,
+						t,
+						seedPath: rng.path,
+						...(attributed ? { agentId } : {}),
+						...(interview === undefined ? {} : { provenance: "interview" }),
+					},
 					{
 						kind: "observation",
 						payload: {
@@ -295,16 +362,23 @@ class FocalExecutor implements Executor {
 		agentId: EntityId,
 		context: ReadonlyMap<string, JsonValue>,
 		actions: readonly ActionSummary[],
+		interview?: InterviewExtra,
 	): PromptInput {
 		const name = context.get(CONTEXT_KEYS.name);
 		const instructions = context.get(CONTEXT_KEYS.instructions);
 		const observation: Record<string, JsonValue> = {};
 		for (const [k, v] of context) if (!RESERVED_KEYS.includes(k)) observation[k] = v;
+		for (const [k, v] of Object.entries(interview?.observation ?? {})) observation[k] = v;
 		return {
 			agentId,
 			...(typeof name === "string" ? { name } : {}),
 			persona: personaOf(context.get(CONTEXT_KEYS.persona)),
-			instructions: typeof instructions === "string" ? instructions : "",
+			instructions: [
+				typeof instructions === "string" ? instructions : "",
+				interview?.instructions ?? "",
+			]
+				.filter((s) => s.length > 0)
+				.join("\n\n"),
 			memory: memoryEntriesOf(context.get(CONTEXT_KEYS.memory)).map((m) => ({
 				...m,
 				eventId: toEventId(m.eventId),

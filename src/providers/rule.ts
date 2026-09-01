@@ -4,6 +4,7 @@ import type { DecisionProvider, Rng } from "../core/protocols";
 import { err, ok } from "../core/result";
 import { rngFromSeed } from "../core/rng";
 import type {
+	Cost,
 	Decision,
 	DecisionRequest,
 	EntityId,
@@ -21,6 +22,14 @@ export interface RuleProviderOptions {
 	readonly seed: number;
 	readonly rule: RuleFn;
 }
+
+const ZERO_COST: Cost = {
+	llmCalls: 0,
+	promptTokens: 0,
+	completionTokens: 0,
+	cachedTokens: 0,
+	wallMs: 0,
+};
 
 const agentKey = (id: EntityId): number => Number.parseInt(sha256Hex(id).slice(0, 8), 16) >>> 0;
 
@@ -71,3 +80,30 @@ class RuleProvider implements DecisionProvider {
 
 export const createRuleProvider = (options: RuleProviderOptions): DecisionProvider =>
 	new RuleProvider(options);
+
+// Built-in rule over the feature vector: one action when a feature exceeds a threshold, another otherwise.
+
+export interface ThresholdRuleOptions {
+	readonly feature: number;
+	readonly threshold: number;
+	readonly above: string;
+	readonly below: string;
+}
+
+export const ruleDecision = (req: DecisionRequest, action: string): Decision => ({
+	agentId: req.agentId,
+	action,
+	args: {},
+	provenance: "rule",
+	cost: ZERO_COST,
+	parseOk: true,
+});
+
+export const thresholdRule =
+	(options: ThresholdRuleOptions): RuleFn =>
+	(req) => {
+		const value = req.features?.[options.feature];
+		if (value === undefined)
+			throw new RangeError(`request carries no feature at index ${options.feature}`);
+		return ruleDecision(req, value > options.threshold ? options.above : options.below);
+	};

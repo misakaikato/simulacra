@@ -10,7 +10,6 @@ import {
 import { jsonlSink } from "../logging/sinks";
 import type { EventHandler } from "./bus";
 import { loadCheckpoint, saveCheckpoint, type CheckpointState } from "./checkpoint";
-import { FAILURE_TYPES } from "./failures";
 import { ZERO_EVENT_ID, makeRunId } from "./ids";
 import type { EventLog, Registry } from "./protocols";
 import { err, ok } from "./result";
@@ -166,22 +165,6 @@ const checkpoint = (sim: Simulation, outDir: string, logger: Logger): void => {
 	logger.info("checkpoint written", { tick, path: dir, worldHash: saved.value.worldHash });
 };
 
-const notImplemented = (sim: Simulation, logger: Logger, stage: string, what: string): void => {
-	sim.emit(
-		{
-			kind: "failure",
-			payload: {
-				stage,
-				excType: FAILURE_TYPES.notImplemented,
-				message: `${what} is not implemented in this kernel version`,
-				retryable: false,
-			},
-		},
-		{ provenance: "kernel" },
-	);
-	logger.error(`${what} skipped`, { stage, excType: FAILURE_TYPES.notImplemented });
-};
-
 const executeSteps = async (
 	sim: Simulation,
 	outDir: string,
@@ -208,24 +191,10 @@ const executeSteps = async (
 				}
 				break;
 			case "intervene":
-				sim.emit(
-					{
-						kind: "intervention",
-						payload: { stepIndex: index, arm: step.arm, targets: [] },
-					},
-					{ provenance: "kernel" },
-				);
-				notImplemented(sim, logger, "intervene", `intervention '${step.arm}'`);
+				await sim.intervene(step.arm, step.instruction, index);
 				break;
 			case "questionnaire":
-				sim.emit(
-					{
-						kind: "measurement",
-						payload: { instrument: "questionnaire", name: step.name, value: null },
-					},
-					{ provenance: "kernel" },
-				);
-				notImplemented(sim, logger, "questionnaire", `questionnaire '${step.name}'`);
+				await sim.questionnaire(step.name, step.targets, index);
 				break;
 			case "checkpoint":
 				writeCheckpoint();
