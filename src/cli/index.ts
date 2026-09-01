@@ -11,6 +11,7 @@ import { replayCommand } from "./commands/replay";
 import { reportCommand } from "./commands/report";
 import { resumeCommand } from "./commands/resume";
 import { runCommand as runScenarioCommand } from "./commands/run";
+import { serveCommand } from "./commands/serve";
 import { pluginPathsOf, wantsDebug } from "./commands/shared";
 
 const subCommands = {
@@ -24,6 +25,7 @@ const subCommands = {
 	"import-oasis": importOasisCommand,
 	doctor: doctorCommand,
 	examples: examplesCommand,
+	serve: serveCommand,
 };
 
 const main = defineCommand({
