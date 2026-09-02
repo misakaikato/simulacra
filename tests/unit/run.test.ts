@@ -10,9 +10,11 @@ import {
 	LOG_FILE,
 	RESULT_FILE,
 	runScenario,
+	withLlmOverride,
 	withProviderOverride,
 	withTicksOverride,
 } from "../../src/core/run";
+import { readRunScenario } from "../../src/core/runDir";
 import type { RunResult } from "../../src/core/types";
 import { gatewayFactory, kernelRegistry, kernelScenario } from "../helpers/kernel";
 import { z } from "zod";
@@ -384,5 +386,31 @@ describe("runScenario", () => {
 		} finally {
 			server.stop(true);
 		}
+	});
+});
+
+describe("llmOverride", () => {
+	test("withLlmOverride shallow-merges into scenario.llm and keeps the source intact", () => {
+		const s = kernelScenario();
+		const budget = { maxCalls: 3, maxCompletionTokens: 50 };
+		const merged = withLlmOverride(s, { mode: "replay", budget });
+		expect(merged.llm).toEqual({ ...s.llm, mode: "replay", budget });
+		expect(s.llm.mode).toBe("live");
+		expect(merged.steps).toBe(s.steps);
+	});
+
+	test("runScenario applies llmOverride before writing scenario.json", async () => {
+		const out = tempDir();
+		const r = await runScenario(kernelScenario(), kernelRegistry().registry, out, {
+			createGateway: gatewayFactory,
+			llmOverride: { mode: "replay", concurrency: { initial: 1, max: 2 } },
+		});
+		expect(r.ok && r.value.status).toBe("succeeded");
+		const written = readRunScenario(out);
+		expect(written.ok).toBe(true);
+		if (!written.ok) return;
+		expect(written.value.llm.mode).toBe("replay");
+		expect(written.value.llm.concurrency).toEqual({ initial: 1, max: 2 });
+		expect(written.value.llm.budget).toEqual(kernelScenario().llm.budget);
 	});
 });

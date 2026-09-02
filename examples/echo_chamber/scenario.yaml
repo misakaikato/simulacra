@@ -102,4 +102,6 @@ steps:
     - { kind: checkpoint }
     - { kind: run, ticks: 5 }
 llm:
+    mode: live
+    recordDir: ./recordings
     budget: { maxCalls: 120, maxCompletionTokens: 200 }

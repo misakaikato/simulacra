@@ -12,7 +12,7 @@ import {
 	parseScenarioYaml,
 	readRunScenario,
 	replayWorld,
-	resolveScenarioPlugins,
+	resolveScenarioPaths,
 	toEntityId,
 	toEventId,
 	toRunId,
@@ -73,12 +73,12 @@ const scenarioOf = (
 	if (typeof raw !== "string") {
 		const parsed = parseScenario(raw);
 		if (!parsed.ok) return { ok: false, error: issuesOf(parsed.error, "scenario") };
-		return ok(resolveScenarioPlugins(parsed.value, process.cwd()));
+		return ok(resolveScenarioPaths(parsed.value, process.cwd()));
 	}
 	const parsed = parseScenarioYaml(raw);
 	if (!parsed.ok) return { ok: false, error: issuesOf(parsed.error, "scenario") };
 	return ok(
-		resolveScenarioPlugins(parsed.value, exampleDirOf(raw, "scenario.yaml") ?? process.cwd()),
+		resolveScenarioPaths(parsed.value, exampleDirOf(raw, "scenario.yaml") ?? process.cwd()),
 	);
 };
 

@@ -1,4 +1,4 @@
-import { isLogLevel, type LogLevel } from "../../index";
+import { isLogLevel, type LLMSpec, type LogLevel } from "../../index";
 
 export class CliError extends Error {
 	constructor(message: string) {
@@ -58,6 +58,15 @@ export const logLevelArg = (value: string | undefined): LogLevel | undefined => 
 	if (!isLogLevel(value))
 		return fail(`--log-level must be one of trace, debug, info, warn, error`);
 	return value;
+};
+
+export const LLM_MODES: readonly LLMSpec["mode"][] = ["live", "record", "replay"];
+
+export const llmModeArg = (value: string | undefined): LLMSpec["mode"] | undefined => {
+	if (value === undefined) return undefined;
+	const mode = LLM_MODES.find((m) => m === value);
+	if (mode === undefined) return fail(`--llm-mode must be one of ${LLM_MODES.join(", ")}`);
+	return mode;
 };
 
 export const wantsDebug = (rawArgs: readonly string[]): boolean =>

@@ -12,7 +12,15 @@ import {
 	type AuditError,
 	type LogSink,
 } from "../../index";
-import { fail, logLevelArg, pluginPathsOf, positiveArg, print } from "./shared";
+import {
+	LLM_MODES,
+	fail,
+	llmModeArg,
+	logLevelArg,
+	pluginPathsOf,
+	positiveArg,
+	print,
+} from "./shared";
 
 export const AUDIT_LOG_FILE = "log.jsonl";
 
@@ -58,6 +66,11 @@ export const auditCommand = defineCommand({
 			options: ["mock", "llm"],
 			description: "replace every provider with this kind",
 		},
+		"llm-mode": {
+			type: "enum",
+			options: [...LLM_MODES],
+			description: "gateway mode for every run: live, record into llm.recordDir or replay",
+		},
 		"include-incomplete": {
 			type: "boolean",
 			description: "keep runs with integrity.complete=false in the statistics",
@@ -76,6 +89,7 @@ export const auditCommand = defineCommand({
 		const replications = positiveArg("replications", args.replications);
 		const concurrency = positiveArg("concurrency", args.concurrency);
 		const logLevel = logLevelArg(args["log-level"]);
+		const mode = llmModeArg(args["llm-mode"]);
 		const sink = lazyJsonlSink(join(args.out, AUDIT_LOG_FILE));
 		const logger = createLogger({ level: logLevel ?? levelFromEnv(), sinks: [sink] });
 		try {
@@ -84,6 +98,7 @@ export const auditCommand = defineCommand({
 				kernelRunFn({
 					plugins,
 					...(args.provider === undefined ? {} : { providerOverride: args.provider }),
+					...(mode === undefined ? {} : { llmOverride: { mode } }),
 					...(logLevel === undefined ? {} : { logLevel }),
 				}),
 				args.out,

@@ -2,9 +2,11 @@ import { existsSync } from "node:fs";
 import { defineCommand } from "citty";
 import { digest, loadScenario, runScenario, type RunResult } from "../../index";
 import {
+	LLM_MODES,
 	describeFailure,
 	fail,
 	integerArg,
+	llmModeArg,
 	logLevelArg,
 	pluginPathsOf,
 	positiveArg,
@@ -41,6 +43,11 @@ export const runCommand = defineCommand({
 			options: ["mock", "llm"],
 			description: "replace every provider with this kind",
 		},
+		"llm-mode": {
+			type: "enum",
+			options: [...LLM_MODES],
+			description: "gateway mode: live, record into llm.recordDir or replay from it",
+		},
 		plugin: { type: "string", description: "module exporting register(registry); repeatable" },
 		overwrite: { type: "boolean", description: "replace a non-empty output directory" },
 		"log-level": { type: "string", description: "trace, debug, info, warn or error" },
@@ -60,11 +67,13 @@ export const runCommand = defineCommand({
 		const ticks = positiveArg("ticks", args.ticks);
 		const every = positiveArg("checkpoint-every", args["checkpoint-every"]);
 		const logLevel = logLevelArg(args["log-level"]);
+		const mode = llmModeArg(args["llm-mode"]);
 		const result = await runScenario(scenario, args.out, {
 			plugins,
 			overwrite: args.overwrite === true,
 			...(ticks === undefined ? {} : { ticksOverride: ticks }),
 			...(args.provider === undefined ? {} : { providerOverride: args.provider }),
+			...(mode === undefined ? {} : { llmOverride: { mode } }),
 			...(every === undefined ? {} : { checkpointEvery: every }),
 			...(logLevel === undefined ? {} : { logLevel }),
 		});

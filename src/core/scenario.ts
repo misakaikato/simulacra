@@ -29,6 +29,15 @@ export const resolveScenarioPlugins = (scenario: Scenario, baseDir: string): Sce
 		? scenario
 		: { ...scenario, plugins: scenario.plugins.map((p) => resolve(baseDir, p)) };
 
+// Every path a scenario file declares relative to itself: plugins and the LLM recording directory
+export const resolveScenarioPaths = (scenario: Scenario, baseDir: string): Scenario => {
+	const withPlugins = resolveScenarioPlugins(scenario, baseDir);
+	const recordDir = scenario.llm.recordDir;
+	return recordDir === undefined
+		? withPlugins
+		: { ...withPlugins, llm: { ...withPlugins.llm, recordDir: resolve(baseDir, recordDir) } };
+};
+
 export const spawnReplications = (s: Scenario, n: number): readonly Scenario[] =>
 	Array.from({ length: n }, (_, i) => ({
 		...s,

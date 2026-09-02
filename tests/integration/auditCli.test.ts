@@ -4,6 +4,7 @@ import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { eventLogPath, openSqliteEventLog } from "../../src/core/log";
+import { readRunScenario } from "../../src/core/runDir";
 import type { AuditReport } from "../../src/core/types";
 import { loadAuditPlan } from "../../src/index";
 
@@ -235,4 +236,33 @@ describe("simulacra import-oasis", () => {
 		expect(unknown.code).toBe(1);
 		expect(unknown.stderr).toContain("metric 'nope'");
 	});
+});
+
+describe("simulacra audit --llm-mode", () => {
+	test("reaches every run's scenario.json", () => {
+		const out = tempDir();
+		const r = cli([
+			"audit",
+			PD_AUDIT,
+			"--replications",
+			"1",
+			"--provider",
+			"mock",
+			"--llm-mode",
+			"replay",
+			"--out",
+			out,
+		]);
+		expect(r.stderr).toBe("");
+		expect(r.code).toBe(0);
+		for (const condition of ["base", "framing-2"]) {
+			const written = readRunScenario(join(out, "runs", condition, "0"));
+			expect(written.ok).toBe(true);
+			if (!written.ok) continue;
+			expect(written.value.llm.mode).toBe("replay");
+			expect(written.value.llm.recordDir).toBe(
+				join(ROOT, "examples/prisoners_dilemma/recordings"),
+			);
+		}
+	}, 60000);
 });

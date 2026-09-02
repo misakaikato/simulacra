@@ -75,4 +75,6 @@ instruments:
 steps:
     - { kind: run, ticks: 10 }
 llm:
+    mode: live
+    recordDir: ./recordings
     budget: { maxCalls: 40, maxCompletionTokens: 200 }

@@ -5,7 +5,7 @@ import { z } from "zod";
 import { hashOf } from "../core/hash";
 import { err, ok } from "../core/result";
 import { AuditPlanSchema, ScenarioSchema } from "../core/schema";
-import { resolveScenarioPlugins, type ScenarioIssue } from "../core/scenario";
+import { resolveScenarioPaths, type ScenarioIssue } from "../core/scenario";
 import type { AuditPlan, Result, Scenario } from "../core/types";
 
 export const AuditPlanDocumentSchema = AuditPlanSchema.omit({ base: true })
@@ -46,7 +46,7 @@ const resolveBase = (
 		if (loaded.ok) return loaded;
 		return err(loaded.error.map((i) => ({ ...i, path: ["baseScenario", ...i.path] })));
 	}
-	if (doc.base !== undefined) return ok(resolveScenarioPlugins(doc.base, opts.baseDir));
+	if (doc.base !== undefined) return ok(resolveScenarioPaths(doc.base, opts.baseDir));
 	return err([issue(["base"], "exactly one of base or baseScenario is required", undefined)]);
 };
 
