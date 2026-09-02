@@ -1,0 +1,36 @@
+{
+	"version": 1,
+	"key": "ff0f9ce82cf50cfb7ecd051c6273a8c7b973ead4868d6b3635d1267cfdbe5f4c",
+	"request": {
+		"promptHash": "9640ecb9bf0136671151c632c06cba59a6b3ec2f6cc4f46a232c31cb6bf4dce6",
+		"model": "deepseek-v4-flash",
+		"temperature": 0,
+		"maxTokens": 512,
+		"seed": 7,
+		"structured": "auto",
+		"extra": {
+			"thinking": {
+				"type": "disabled"
+			}
+		},
+		"tags": {
+			"purpose": "decision",
+			"eventId": "7QMHTHVB3Q8Z48BVMMMYWN5QHR",
+			"agentId": "7TTG5ZHM3100T9XJHCSDZ1TDJ7",
+			"tick": "2"
+		},
+		"preview": "You use a small social network where people discuss one contested issue. Your stance runs from -2 (strongly against) to 2 (strongly in favour). Each round you see a few posts from your feed; you may p"
+	},
+	"response": {
+		"text": "{\"action\":\"silent\",\"args\":{},\"rationale\":\"No feed content or prior context to act on; staying silent avoids unnecessary engagement.\"}",
+		"usage": {
+			"promptTokens": 752,
+			"completionTokens": 30,
+			"cachedTokens": 0
+		},
+		"model": "deepseek-v4-flash",
+		"latencyMs": 1072.9899580000001,
+		"structured": "prompt",
+		"finishReason": "stop"
+	}
+}

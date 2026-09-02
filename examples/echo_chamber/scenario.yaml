@@ -104,4 +104,5 @@ steps:
 llm:
     mode: live
     recordDir: ./recordings
-    budget: { maxCalls: 120, maxCompletionTokens: 200 }
+    budget: { maxCalls: 120, maxCompletionTokens: 512 }
+    extra: { thinking: { type: disabled } }

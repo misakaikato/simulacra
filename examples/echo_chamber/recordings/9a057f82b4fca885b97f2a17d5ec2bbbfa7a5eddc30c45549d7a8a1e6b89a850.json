@@ -1,0 +1,36 @@
+{
+	"version": 1,
+	"key": "9a057f82b4fca885b97f2a17d5ec2bbbfa7a5eddc30c45549d7a8a1e6b89a850",
+	"request": {
+		"promptHash": "d274e76c70cc682fdc9ecff41dd4d9c72b80663fcdd7627c2a20065bfee6df73",
+		"model": "deepseek-v4-flash",
+		"temperature": 0,
+		"maxTokens": 512,
+		"seed": 7,
+		"structured": "auto",
+		"extra": {
+			"thinking": {
+				"type": "disabled"
+			}
+		},
+		"tags": {
+			"purpose": "decision",
+			"eventId": "7NWDES34B50J57MV13H20DWB7F",
+			"agentId": "7TTG5ZHM3100T9XJHCSDZ1TDHW",
+			"tick": "1"
+		},
+		"preview": "You use a small social network where people discuss one contested issue. Your stance runs from -2 (strongly against) to 2 (strongly in favour). Each round you see a few posts from your feed; you may p"
+	},
+	"response": {
+		"text": "{\"action\":\"follow\",\"args\":{\"target\":\"7TTG5ZHM3100T9XJHCSDZ1TDJ7\"},\"rationale\":\"I need to build my feed to see others' posts and engage with the discussion. Following a neighbor is a reasonable first step.\"}",
+		"usage": {
+			"promptTokens": 699,
+			"completionTokens": 60,
+			"cachedTokens": 0
+		},
+		"model": "deepseek-v4-flash",
+		"latencyMs": 724.7055840000012,
+		"structured": "prompt",
+		"finishReason": "stop"
+	}
+}
