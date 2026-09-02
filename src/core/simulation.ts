@@ -172,6 +172,37 @@ interface AgentOutcome {
 	readonly call?: ActionCall;
 }
 
+// Decisions of one batch executor in one tick, folded into a single decision_batch event.
+// The event id is drawn up front so action calls and act effects can name it as their cause.
+interface DecisionBatch {
+	readonly eventId: EventId;
+	readonly executor: string;
+	readonly provider: string;
+	readonly agentIds: EntityId[];
+	readonly actions: string[];
+	readonly provenances: Map<Decision["provenance"], number>;
+	parseFailures: number;
+	cost: Cost;
+}
+
+const addCost = (a: Cost, b: Cost): Cost => ({
+	llmCalls: a.llmCalls + b.llmCalls,
+	promptTokens: a.promptTokens + b.promptTokens,
+	completionTokens: a.completionTokens + b.completionTokens,
+	cachedTokens: a.cachedTokens + b.cachedTokens,
+	wallMs: a.wallMs + b.wallMs,
+});
+
+// Most frequent provenance in the batch; ties go to the one seen first
+const majorityProvenance = (
+	tally: ReadonlyMap<Decision["provenance"], number>,
+): Decision["provenance"] => {
+	let best: { readonly provenance: Decision["provenance"]; readonly n: number } | undefined;
+	for (const [provenance, n] of tally)
+		if (best === undefined || n > best.n) best = { provenance, n };
+	return best?.provenance ?? "rule";
+};
+
 interface ExecutorSlot {
 	executor: Executor;
 	readonly provider: DecisionProvider;
@@ -330,10 +361,14 @@ class KernelSimulation implements Simulation {
 	}
 
 	emit(init: EventInit, fields: EventFields = {}): Event {
+		return this.emitAs(this.nextEventId(), init, fields);
+	}
+
+	private emitAs(eventId: EventId, init: EventInit, fields: EventFields = {}): Event {
 		if (fields.atBoundary !== true) this.clock.nextSeq();
 		const event = makeEvent(
 			{
-				eventId: this.nextEventId(),
+				eventId,
 				runId: this.runId,
 				t: this.clock.now,
 				seedPath: this.eventRng.path,
@@ -1013,6 +1048,7 @@ class KernelSimulation implements Simulation {
 	}> {
 		const { executor, provider } = slot;
 		const label = `executor:${executor.name}`;
+		const batch = this.openBatch(executor, provider);
 		this.clock.advanceSubstep();
 		let requests: readonly DecisionRequest[];
 		try {
@@ -1023,6 +1059,7 @@ class KernelSimulation implements Simulation {
 				this.log,
 				tickRng.fork(keyFromLabel(`${label}:observe`)),
 				this.moduleObservations(ids),
+				{ activationEvent },
 			);
 		} catch (e) {
 			const d = describeError(e);
@@ -1042,13 +1079,16 @@ class KernelSimulation implements Simulation {
 				tickRng,
 				label,
 				executor,
+				batch,
 			);
+			this.closeBatch(batch, activationEvent);
 			return {
 				effects: outcomes.effects,
 				decisions: outcomes.decisions,
 				batchFailed: ids.length > 0,
 			};
 		}
+		const observationEvent = requests[0]?.observationEvent ?? activationEvent;
 		const requested = new Set(requests.map((r) => r.agentId));
 		this.counts.failed += ids.filter((id) => !requested.has(id)).length;
 
@@ -1094,7 +1134,9 @@ class KernelSimulation implements Simulation {
 				tickRng,
 				label,
 				executor,
+				batch,
 			);
+			this.closeBatch(batch, observationEvent);
 			return { effects: outcomes.effects, decisions: outcomes.decisions, batchFailed: true };
 		}
 
@@ -1105,7 +1147,7 @@ class KernelSimulation implements Simulation {
 			const result = results?.[i];
 			let outcome: AgentOutcome | undefined;
 			if (result !== undefined && result.ok && result.value.agentId === request.agentId) {
-				outcome = this.accept(result.value, request, provider.name, executor);
+				outcome = this.accept(result.value, request, provider.name, executor, batch);
 				if (outcome !== undefined) anyOk = true;
 			} else {
 				const failure: ProviderFailure =
@@ -1127,12 +1169,13 @@ class KernelSimulation implements Simulation {
 					{ agentId: request.agentId, parent: request.observationEvent },
 				);
 				if (failure.excType !== undefined && PARSE_FAILURE_TYPES.includes(failure.excType))
-					this.counts.parseFailures += 1;
+					this.parseFailure(batch);
 				outcome = this.fallback(
 					request.agentId,
 					request.observationEvent,
 					provider.name,
 					executor,
+					batch,
 				);
 			}
 			if (outcome === undefined) continue;
@@ -1140,6 +1183,7 @@ class KernelSimulation implements Simulation {
 			if (outcome.call !== undefined)
 				effects.push(...(await this.resolve(outcome.call, tickRng, label)));
 		}
+		this.closeBatch(batch, observationEvent);
 		const executorEffects = await this.executorAct(
 			executor,
 			decisions,
@@ -1148,10 +1192,74 @@ class KernelSimulation implements Simulation {
 			activationEvent,
 		);
 		return {
-			effects: [...effects, ...executorEffects],
+			effects: [
+				...effects,
+				...(batch === undefined
+					? executorEffects
+					: executorEffects.map((e) => ({ ...e, cause: batch.eventId }))),
+			],
 			decisions,
 			batchFailed: requests.length > 0 && !anyOk,
 		};
+	}
+
+	private openBatch(executor: Executor, provider: DecisionProvider): DecisionBatch | undefined {
+		if (executor.batchEvents !== true) return undefined;
+		return {
+			eventId: this.nextEventId(),
+			executor: executor.name,
+			provider: provider.name,
+			agentIds: [],
+			actions: [],
+			provenances: new Map(),
+			parseFailures: 0,
+			cost: ZERO_COST,
+		};
+	}
+
+	private closeBatch(batch: DecisionBatch | undefined, parent: EventId): void {
+		if (batch === undefined || batch.agentIds.length === 0) return;
+		const provenance = majorityProvenance(batch.provenances);
+		this.emitAs(
+			batch.eventId,
+			{
+				kind: "decision_batch",
+				payload: {
+					executor: batch.executor,
+					provider: batch.provider,
+					agentIds: batch.agentIds,
+					actions: batch.actions,
+					provenance,
+					parseFailures: batch.parseFailures,
+					cost: batch.cost,
+				},
+			},
+			{ parent, provenance },
+		);
+	}
+
+	private parseFailure(batch: DecisionBatch | undefined): void {
+		this.counts.parseFailures += 1;
+		if (batch !== undefined) batch.parseFailures += 1;
+	}
+
+	// Per-agent decision event, or an entry in the executor's decision_batch; returns the
+	// event id an action call names as its cause.
+	private recordDecision(
+		decision: Decision,
+		providerName: string,
+		parent: EventId,
+		batch: DecisionBatch | undefined,
+	): EventId {
+		if (batch === undefined) return this.decisionEvent(decision, providerName, parent).eventId;
+		batch.agentIds.push(decision.agentId);
+		batch.actions.push(decision.action);
+		batch.provenances.set(
+			decision.provenance,
+			(batch.provenances.get(decision.provenance) ?? 0) + 1,
+		);
+		batch.cost = addCost(batch.cost, decision.cost);
+		return batch.eventId;
 	}
 
 	private async executorAct(
@@ -1184,9 +1292,10 @@ class KernelSimulation implements Simulation {
 		request: DecisionRequest,
 		providerName: string,
 		executor: Executor,
+		batch: DecisionBatch | undefined,
 	): AgentOutcome | undefined {
 		if (executor.resolvesOwnActions === true)
-			return this.acceptOwn(decision, request, providerName, executor);
+			return this.acceptOwn(decision, request, providerName, executor, batch);
 		const validated = this.registry.actions.validate({
 			agentId: decision.agentId,
 			name: decision.action,
@@ -1210,17 +1319,18 @@ class KernelSimulation implements Simulation {
 				},
 				{ agentId: decision.agentId, parent: request.observationEvent },
 			);
-			this.counts.parseFailures += 1;
+			this.parseFailure(batch);
 			return this.fallback(
 				decision.agentId,
 				request.observationEvent,
 				providerName,
 				executor,
+				batch,
 			);
 		}
-		const event = this.decisionEvent(decision, providerName, request.observationEvent);
+		const cause = this.recordDecision(decision, providerName, request.observationEvent, batch);
 		this.counts.ok += 1;
-		return { decision, call: { ...validated.value, cause: event.eventId } };
+		return { decision, call: { ...validated.value, cause } };
 	}
 
 	// Executors that resolve their own actions (batch transitions) bypass the action registry:
@@ -1230,6 +1340,7 @@ class KernelSimulation implements Simulation {
 		request: DecisionRequest,
 		providerName: string,
 		executor: Executor,
+		batch: DecisionBatch | undefined,
 	): AgentOutcome | undefined {
 		if (!request.actionSpace.includes(decision.action)) {
 			this.recordFailure(
@@ -1241,15 +1352,16 @@ class KernelSimulation implements Simulation {
 				},
 				{ agentId: decision.agentId, parent: request.observationEvent },
 			);
-			this.counts.parseFailures += 1;
+			this.parseFailure(batch);
 			return this.fallback(
 				decision.agentId,
 				request.observationEvent,
 				providerName,
 				executor,
+				batch,
 			);
 		}
-		this.decisionEvent(decision, providerName, request.observationEvent);
+		this.recordDecision(decision, providerName, request.observationEvent, batch);
 		this.counts.ok += 1;
 		return { decision };
 	}
@@ -1278,10 +1390,11 @@ class KernelSimulation implements Simulation {
 		parent: EventId,
 		providerName: string,
 		executor?: Executor,
+		batch?: DecisionBatch,
 	): AgentOutcome | undefined {
 		this.counts.failed += 1;
 		if (executor?.resolvesOwnActions === true)
-			return this.fallbackOwn(agentId, parent, providerName, executor);
+			return this.fallbackOwn(agentId, parent, providerName, executor, batch);
 		const def = this.registry.actions.fallback();
 		if (def === undefined) {
 			this.recordFailure(
@@ -1321,8 +1434,8 @@ class KernelSimulation implements Simulation {
 			);
 			return undefined;
 		}
-		const event = this.decisionEvent(decision, providerName, parent);
-		return { decision, call: { ...validated.value, cause: event.eventId } };
+		const cause = this.recordDecision(decision, providerName, parent, batch);
+		return { decision, call: { ...validated.value, cause } };
 	}
 
 	private fallbackOwn(
@@ -1330,6 +1443,7 @@ class KernelSimulation implements Simulation {
 		parent: EventId,
 		providerName: string,
 		executor: Executor,
+		batch: DecisionBatch | undefined,
 	): AgentOutcome | undefined {
 		const action = executor.fallbackAction;
 		if (action === undefined) {
@@ -1352,7 +1466,7 @@ class KernelSimulation implements Simulation {
 			cost: ZERO_COST,
 			parseOk: false,
 		};
-		this.decisionEvent(decision, providerName, parent);
+		this.recordDecision(decision, providerName, parent, batch);
 		return { decision };
 	}
 
@@ -1362,11 +1476,12 @@ class KernelSimulation implements Simulation {
 		tickRng: Rng,
 		label: string,
 		executor: Executor,
+		batch: DecisionBatch | undefined,
 	): Promise<{ readonly effects: readonly Effect[]; readonly decisions: readonly Decision[] }> {
 		const effects: Effect[] = [];
 		const decisions: Decision[] = [];
 		for (const { agentId, parent } of targets) {
-			const outcome = this.fallback(agentId, parent, providerName, executor);
+			const outcome = this.fallback(agentId, parent, providerName, executor, batch);
 			if (outcome === undefined) continue;
 			decisions.push(outcome.decision);
 			if (outcome.call !== undefined)
@@ -1646,13 +1761,21 @@ class KernelSimulation implements Simulation {
 	}
 
 	// Boundary steps record at substep 0 before the tick starts; only in-tick events count.
+	// A decision is a per-agent decision event or one entry in a decision_batch.
 	private assertComplete(tick: number, activation: Activation): void {
 		const decisions = new Map<string, number>();
 		const failures = new Set<string>();
-		for (const e of this.log.query({ tick, kind: ["decision", "failure"] })) {
-			if (e.agentId === undefined || e.t.substep === 0) continue;
-			if (e.kind === "decision")
-				decisions.set(e.agentId, (decisions.get(e.agentId) ?? 0) + 1);
+		const decided = (id: string): void => {
+			decisions.set(id, (decisions.get(id) ?? 0) + 1);
+		};
+		for (const e of this.log.query({ tick, kind: ["decision", "decision_batch", "failure"] })) {
+			if (e.t.substep === 0) continue;
+			if (e.kind === "decision_batch") {
+				for (const id of e.payload.agentIds) decided(id);
+				continue;
+			}
+			if (e.agentId === undefined) continue;
+			if (e.kind === "decision") decided(e.agentId);
 			else failures.add(e.agentId);
 		}
 		for (const id of Object.keys(activation.agents)) {

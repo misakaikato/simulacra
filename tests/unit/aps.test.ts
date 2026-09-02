@@ -207,8 +207,17 @@ describe("aps router", () => {
 		}
 		expect(sim.integrity().complete).toBe(true);
 		expect(sim.integrity().failed).toBe(0);
-		const provenances = new Set(sim.log.query({ kind: ["decision"] }).map((e) => e.provenance));
-		expect(provenances).toEqual(new Set(["rule", "prototype"]));
+		// Prototype broadcasts cover most of the cohort; the downstream rule answers the rest, so
+		// the batch carries the majority provenance and the router as provider.
+		const batches = sim.log.query({ kind: ["decision_batch"] });
+		expect(batches).toHaveLength(3);
+		for (const e of batches) {
+			if (e.kind !== "decision_batch") continue;
+			expect(e.payload.provider).toBe("rule");
+			expect(e.payload.provenance).toBe("prototype");
+			expect(e.provenance).toBe("prototype");
+		}
+		expect(sim.measurements()["provider.rule.calls"]).toBeGreaterThan(0);
 	});
 });
 

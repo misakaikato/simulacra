@@ -264,6 +264,31 @@ export type Event =
 				readonly parseOk: boolean;
 			};
 	  })
+	// One event per executor and tick for executors that declare batchEvents; agentIds are the
+	// activated agents the executor observed, in request order.
+	| (EventBase & {
+			readonly kind: "observation_batch";
+			readonly payload: {
+				readonly executor: string;
+				readonly agentIds: readonly EntityId[];
+				readonly count: number;
+				readonly featuresSha?: string;
+			};
+	  })
+	// actions align with agentIds; parseFailures counts the agents in this batch whose
+	// failure was a parse or validation failure, the same subset Integrity.parseFailures counts.
+	| (EventBase & {
+			readonly kind: "decision_batch";
+			readonly payload: {
+				readonly executor: string;
+				readonly provider: string;
+				readonly agentIds: readonly EntityId[];
+				readonly actions: readonly string[];
+				readonly provenance: Exclude<Provenance, "kernel" | "manual">;
+				readonly parseFailures: number;
+				readonly cost: Cost;
+			};
+	  })
 	| (EventBase & {
 			readonly kind: "llm_call";
 			readonly payload: {
@@ -321,6 +346,7 @@ export type Event =
 export type EventKind = Event["kind"];
 export type EventOf<K extends EventKind> = Extract<Event, { readonly kind: K }>;
 export type EventPayload<K extends EventKind> = EventOf<K>["payload"];
+export type BatchEventKind = "observation_batch" | "decision_batch";
 
 export interface EventFilter {
 	readonly kind?: readonly EventKind[];
@@ -331,6 +357,9 @@ export interface EventFilter {
 	readonly limit?: number;
 	readonly offset?: number;
 }
+
+// Batch events carry no agentId; membership is by payload.agentIds, so the filter has none.
+export type BatchEventFilter = Omit<EventFilter, "agentId">;
 
 // Decisions
 

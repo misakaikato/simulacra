@@ -3,7 +3,7 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { EVENT_KINDS, compareEvents, isEventKind, makeEvent } from "../../src/core/events";
-import { makeRunId, newEntityId, newEventId, toEventId } from "../../src/core/ids";
+import { makeRunId, newEntityId, newEventId, toEntityId, toEventId } from "../../src/core/ids";
 import { createMemoryEventLog, eventLogPath, openSqliteEventLog } from "../../src/core/log";
 import type { EventLog } from "../../src/core/protocols";
 import { rngFromSeed } from "../../src/core/rng";
@@ -87,8 +87,9 @@ describe("events", () => {
 		expect("agentId" in e).toBe(false);
 		expect("parent" in e).toBe(false);
 		expect(e.kind).toBe("checkpoint");
-		expect(EVENT_KINDS).toHaveLength(10);
+		expect(EVENT_KINDS).toHaveLength(12);
 		expect(isEventKind("decision")).toBe(true);
+		expect(isEventKind("decision_batch")).toBe(true);
 		expect(isEventKind("nope")).toBe(false);
 	});
 
@@ -176,6 +177,69 @@ for (const impl of impls) {
 				other,
 			]);
 			expect(log.chain(toEventId("01ARZ3NDEKTSV4RRFFQ69G5FAV"))).toEqual([]);
+			log.close();
+		});
+
+		test("batchesOf finds batch events by agentIds membership, not by agentId", () => {
+			const log = impl.open();
+			const rng = rngFromSeed(7, []);
+			const [a, b, c] = ["A", "B", "C"].map(toEntityId) as [EntityId, EntityId, EntityId];
+			const cost = {
+				llmCalls: 0,
+				promptTokens: 0,
+				completionTokens: 0,
+				cachedTokens: 0,
+				wallMs: 0,
+			};
+			const at = (tick: number, seq: number, agentId?: EntityId) => ({
+				eventId: newEventId(rng),
+				runId,
+				t: timeAt(tick, 1, seq),
+				seedPath: [tick],
+				...(agentId === undefined ? {} : { agentId }),
+			});
+			const events: Event[] = [
+				makeEvent(at(1, 0), {
+					kind: "observation_batch",
+					payload: { executor: "crowd", agentIds: [a, b], count: 2 },
+				}),
+				makeEvent(at(1, 1), {
+					kind: "decision_batch",
+					payload: {
+						executor: "crowd",
+						provider: "rule",
+						agentIds: [a, b],
+						actions: ["post", "silent"],
+						provenance: "rule",
+						parseFailures: 0,
+						cost,
+					},
+				}),
+				makeEvent(at(1, 2, a), {
+					kind: "decision",
+					payload: { action: "post", args: {}, provider: "mock", parseOk: true },
+				}),
+				makeEvent(at(2, 0), {
+					kind: "observation_batch",
+					payload: { executor: "crowd", agentIds: [b], count: 1 },
+				}),
+			];
+			log.beginTick();
+			for (const e of events) log.append(e);
+			log.endTick();
+			expect(log.batchesOf(a).map((e) => e.kind)).toEqual([
+				"observation_batch",
+				"decision_batch",
+			]);
+			expect(log.batchesOf(b).map((e) => e.t.tick)).toEqual([1, 1, 2]);
+			expect(log.batchesOf(b, { tick: 2 })).toEqual([events[3] as Event]);
+			expect(log.batchesOf(b, { kind: ["decision_batch"] })).toHaveLength(1);
+			expect(log.batchesOf(b, { kind: [] })).toEqual([]);
+			expect(log.batchesOf(b, { limit: 1, offset: 1 }).map((e) => e.kind)).toEqual([
+				"decision_batch",
+			]);
+			expect(log.batchesOf(c)).toEqual([]);
+			expect(log.query({ agentId: a }).map((e) => e.kind)).toEqual(["decision"]);
 			log.close();
 		});
 

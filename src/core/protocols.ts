@@ -3,6 +3,7 @@ import type { Logger } from "../logging/logger";
 import type {
 	ActionCall,
 	Activation,
+	BatchEventFilter,
 	ColumnDecl,
 	Cost,
 	Decision,
@@ -156,12 +157,19 @@ export interface ActivationPolicy {
 
 export type ModuleObservations = ReadonlyMap<EntityId, JsonObject>;
 
+export interface ObserveContext {
+	readonly activationEvent: EventId;
+}
+
 export interface Executor {
 	readonly name: string;
 	readonly entity: string;
 	readonly provider: string;
 	readonly resolvesOwnActions?: boolean;
 	readonly fallbackAction?: string;
+	// Batch executors write one observation_batch per tick from observe and get one
+	// decision_batch per tick from the kernel instead of per-agent observation and decision events.
+	readonly batchEvents?: boolean;
 	declare(world: World): Result<void, DeclareError>;
 	owns?(world: WorldView, id: EntityId): boolean;
 	observe(
@@ -171,6 +179,7 @@ export interface Executor {
 		log: EventLog,
 		rng: Rng,
 		observations?: ModuleObservations,
+		ctx?: ObserveContext,
 	): Promise<readonly DecisionRequest[]>;
 	act(decisions: readonly Decision[], ctx: ResolveContext): Promise<readonly Effect[]>;
 	after(decisions: readonly Decision[], report: EffectReport, log: EventLog): Promise<void>;
@@ -298,6 +307,8 @@ export interface EventLog {
 	putContent(text: string): string;
 	getContent(sha: string): string | undefined;
 	query(filter: EventFilter): readonly Event[];
+	// Batch events (observation_batch, decision_batch) whose agentIds contain the agent
+	batchesOf(agentId: EntityId, filter?: BatchEventFilter): readonly Event[];
 	sql<T>(sql: string, params?: readonly (string | number)[]): readonly T[];
 	chain(eventId: EventId): readonly Event[];
 	digest(): string;

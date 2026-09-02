@@ -4,14 +4,16 @@ import { join } from "node:path";
 import { COHORT_RULE_KIND } from "../../src/providers";
 import { columnStats, zScore } from "../../src/agents/cohort";
 import { opinionDynamics } from "../../src/agents/transitions";
+import { FAILURE_TYPES } from "../../src/core/failures";
 import { makeRunId, toEntityId, toEventId } from "../../src/core/ids";
-import { createMemoryEventLog } from "../../src/core/log";
-import type { DecisionProvider, GraphView } from "../../src/core/protocols";
-import { ok } from "../../src/core/result";
+import { inspectEvents, renderInspect } from "../../src/core/inspect";
+import { createMemoryEventLog, openSqliteEventLog } from "../../src/core/log";
+import type { DecisionProvider, EventLog, GraphView } from "../../src/core/protocols";
+import { err, ok } from "../../src/core/result";
 import { rngFromSeed } from "../../src/core/rng";
 import { overrideScenario, parseScenarioYaml } from "../../src/core/scenario";
 import { createSimulation, type Simulation } from "../../src/core/simulation";
-import type { Decision, EntityId, JsonValue, Scenario } from "../../src/core/types";
+import type { Decision, EntityId, EventOf, JsonValue, Scenario } from "../../src/core/types";
 import { createWorld } from "../../src/core/world";
 import { silentLogger } from "../../src/logging/logger";
 import { ruleDecision } from "../../src/providers/rule";
@@ -41,11 +43,15 @@ const cohortScenario = (n: number, extra: (s: Scenario) => Scenario = (s) => s):
 	return extra(sized.value);
 };
 
-const build = (scenario: Scenario, registry = builtinRegistry()): Simulation => {
+const build = (
+	scenario: Scenario,
+	registry = builtinRegistry(),
+	log: EventLog = createMemoryEventLog(),
+): Simulation => {
 	const created = createSimulation(scenario, registry, {
 		outDir: tempDir(),
 		logger: silentLogger,
-		log: createMemoryEventLog(),
+		log,
 		createGateway: gatewayFactory,
 	});
 	if (!created.ok) throw new Error(`${created.error.excType}: ${created.error.message}`);
@@ -57,6 +63,24 @@ const runTicks = async (sim: Simulation, ticks: number): Promise<void> => {
 		const r = await sim.step();
 		if (!r.ok) throw new Error(r.error.message);
 	}
+};
+
+const observationBatches = (sim: Simulation): readonly EventOf<"observation_batch">[] =>
+	sim.log
+		.query({ kind: ["observation_batch"] })
+		.filter((e): e is EventOf<"observation_batch"> => e.kind === "observation_batch");
+
+const decisionBatches = (sim: Simulation): readonly EventOf<"decision_batch">[] =>
+	sim.log
+		.query({ kind: ["decision_batch"] })
+		.filter((e): e is EventOf<"decision_batch"> => e.kind === "decision_batch");
+
+const sum = (xs: readonly number[]): number => xs.reduce((a, b) => a + b, 0);
+
+const kindCounts = (sim: Simulation, tick: number): Record<string, number> => {
+	const out: Record<string, number> = {};
+	for (const e of sim.log.query({ tick })) out[e.kind] = (out[e.kind] ?? 0) + 1;
+	return out;
 };
 
 const decision = (agentId: EntityId, action: string): Decision => ({
@@ -194,26 +218,135 @@ describe("cohort executor in the kernel", () => {
 		expect(effects.some((e) => e.kind === "effect" && e.payload.effects.length === 1)).toBe(
 			true,
 		);
-		const observations = sim.log.query({ kind: ["observation"] });
-		expect(observations).toHaveLength(integrity.activated);
-		const first = observations[0];
-		if (first?.kind !== "observation") throw new Error("expected observation");
-		const content = JSON.parse(sim.log.getContent(first.payload.contentSha) ?? "null") as {
-			features: number[];
-			neighborMean: number | null;
-		};
-		expect(content.features).toHaveLength(2);
-		expect(typeof content.neighborMean).toBe("number");
-		const decisions = sim.log.query({ kind: ["decision"] });
-		expect(decisions).toHaveLength(integrity.activated);
-		const actions = new Set(
-			decisions.map((d) => (d.kind === "decision" ? d.payload.action : "")),
-		);
+		expect(sim.log.query({ kind: ["observation", "decision"] })).toEqual([]);
+		const observations = observationBatches(sim);
+		const decisions = decisionBatches(sim);
+		expect(observations).toHaveLength(3);
+		expect(decisions).toHaveLength(3);
+		expect(sum(observations.map((e) => e.payload.count))).toBe(integrity.activated);
+		for (const [i, observation] of observations.entries()) {
+			const activation = sim.log.query({ kind: ["activation"], tick: i })[0];
+			expect(observation.agentId).toBeUndefined();
+			expect(observation.parent).toBe(activation?.eventId);
+			expect(observation.payload.executor).toBe("crowd");
+			expect(observation.payload.count).toBe(observation.payload.agentIds.length);
+			expect(observation.payload.featuresSha).toBeUndefined();
+			const decision = decisions[i];
+			expect(decision?.parent).toBe(observation.eventId);
+			expect(decision?.agentId).toBeUndefined();
+			expect(decision?.payload.agentIds).toEqual(observation.payload.agentIds);
+			expect(decision?.payload.actions).toHaveLength(observation.payload.count);
+			expect(decision?.payload).toMatchObject({
+				executor: "crowd",
+				provider: "rule",
+				provenance: "rule",
+				parseFailures: 0,
+				cost: ZERO_COST,
+			});
+			expect(decision?.provenance).toBe("rule");
+		}
+		const actions = new Set(decisions.flatMap((d) => d.payload.actions));
 		expect([...actions].sort()).toEqual(["post", "silent"]);
-		expect(decisions.every((d) => d.kind === "decision" && d.payload.provider === "rule")).toBe(
-			true,
-		);
 		expect(sim.measurements().meanStance).toBeDefined();
+	});
+
+	test("every tick of a 100-agent cohort has exactly one observation batch and one decision batch", async () => {
+		const sim = build(cohortScenario(100));
+		await runTicks(sim, 3);
+		for (const tick of [0, 1, 2])
+			expect(kindCounts(sim, tick)).toMatchObject({
+				activation: 1,
+				observation_batch: 1,
+				decision_batch: 1,
+				effect: 1,
+			});
+		expect(sim.log.query({ kind: ["observation", "decision", "failure"] })).toEqual([]);
+		const integrity = sim.integrity();
+		expect(integrity.complete).toBe(true);
+		expect(integrity.failed).toBe(0);
+		expect(integrity.activated).toBe(sum(observationBatches(sim).map((e) => e.payload.count)));
+		expect(integrity.ok).toBe(sum(decisionBatches(sim).map((e) => e.payload.agentIds.length)));
+		const effects = sim.log.query({ kind: ["effect"] });
+		for (const [i, e] of effects.entries()) {
+			if (e.kind !== "effect") continue;
+			const batch = decisionBatches(sim)[i];
+			for (const effect of e.payload.effects) expect(batch?.eventId).toBe(effect.cause);
+		}
+	});
+
+	test("recordFeatures stores the feature matrix and names it from the observation batch", async () => {
+		const sim = build(
+			cohortScenario(30, (s) => ({
+				...s,
+				executors: s.executors.map((e) => ({
+					...e,
+					options: { ...e.options, recordFeatures: true },
+				})),
+			})),
+		);
+		await runTicks(sim, 1);
+		const [observation] = observationBatches(sim);
+		expect(observation?.payload.featuresSha).toBeDefined();
+		const matrix = JSON.parse(
+			sim.log.getContent(observation?.payload.featuresSha ?? "") ?? "null",
+		) as number[][];
+		expect(matrix).toHaveLength(observation?.payload.count ?? -1);
+		for (const row of matrix) expect(row).toHaveLength(2);
+	});
+
+	test("provider errors become one failure per agent while the batch keeps the fallback action", async () => {
+		const registry = builtinRegistry();
+		const flaky: DecisionProvider = {
+			name: "flaky",
+			decide: async (requests) =>
+				requests.map((req, i) =>
+					i % 3 === 0
+						? err({
+								agentId: req.agentId,
+								reason: "unparseable",
+								retryable: false,
+								excType: FAILURE_TYPES.parseFailure,
+							})
+						: ok(ruleDecision(req, "post")),
+				),
+			reset: () => {},
+			getState: () => null,
+			setState: () => {},
+		};
+		registry.providers.register("flaky", () => ok(flaky));
+		const sim = build(
+			cohortScenario(100, (s) => ({ ...s, providers: { rule: { kind: "flaky" } } })),
+			registry,
+		);
+		await runTicks(sim, 2);
+		const integrity = sim.integrity();
+		expect(integrity.complete).toBe(true);
+		expect(integrity.failed).toBeGreaterThan(0);
+		expect(integrity.parseFailures).toBe(integrity.failed);
+		const failures = sim.log.query({ kind: ["failure"] });
+		expect(failures).toHaveLength(integrity.failed);
+		const batches = decisionBatches(sim);
+		expect(batches).toHaveLength(2);
+		expect(sum(batches.map((b) => b.payload.agentIds.length))).toBe(
+			integrity.ok + integrity.failed,
+		);
+		expect(sum(batches.map((b) => b.payload.parseFailures))).toBe(integrity.parseFailures);
+		expect(sim.log.query({ kind: ["decision"] })).toEqual([]);
+		for (const failure of failures) {
+			if (failure.kind !== "failure") continue;
+			expect(failure.agentId).toBeDefined();
+			expect(failure.payload).toMatchObject({
+				stage: "decide",
+				excType: FAILURE_TYPES.parseFailure,
+			});
+			const batch = batches.find((b) => b.t.tick === failure.t.tick);
+			expect(failure.parent).toBe(batch?.parent);
+			const i = batch?.payload.agentIds.indexOf(failure.agentId ?? toEntityId("")) ?? -1;
+			expect(i).toBeGreaterThanOrEqual(0);
+			expect(batch?.payload.actions[i]).toBe("silent");
+		}
+		const posts = batches.flatMap((b) => b.payload.actions.filter((a) => a === "post"));
+		expect(posts).toHaveLength(integrity.ok);
 	});
 
 	test("two runs with the same seed produce the same digest and a different seed does not", async () => {
@@ -250,11 +383,15 @@ describe("cohort executor in the kernel", () => {
 		expect(integrity.complete).toBe(true);
 		expect(integrity.failed).toBeGreaterThan(0);
 		expect(integrity.parseFailures).toBe(integrity.failed);
-		const decisions = sim.log.query({ kind: ["decision"] });
-		expect(decisions.length).toBe(integrity.activated);
+		const batches = decisionBatches(sim);
+		expect(sum(batches.map((b) => b.payload.agentIds.length))).toBe(integrity.activated);
+		expect(sum(batches.map((b) => b.payload.parseFailures))).toBe(integrity.parseFailures);
+		expect(batches.flatMap((b) => b.payload.actions).every((a) => a === "silent")).toBe(true);
+		const failures = sim.log.query({ kind: ["failure"] });
+		expect(failures).toHaveLength(integrity.failed);
 		expect(
-			decisions.every(
-				(d) => d.kind === "decision" && d.payload.action === "silent" && !d.payload.parseOk,
+			failures.every(
+				(f) => f.kind === "failure" && f.payload.excType === FAILURE_TYPES.invalidAction,
 			),
 		).toBe(true);
 	});
@@ -311,12 +448,51 @@ describe("cohort executor in the kernel", () => {
 		const integrity = sim.integrity();
 		expect(integrity.complete).toBe(true);
 		expect(integrity.failed).toBe(0);
-		const actions = new Set(
-			sim.log
-				.query({ kind: ["decision"] })
-				.map((d) => (d.kind === "decision" ? d.payload.action : "")),
-		);
-		expect([...actions].every((a) => a === "post" || a === "silent")).toBe(true);
+		const actions = decisionBatches(sim).flatMap((b) => b.payload.actions);
+		expect(actions).toHaveLength(integrity.activated);
+		expect(actions.every((a) => a === "post" || a === "silent")).toBe(true);
+	});
+
+	test("inspect resolves a cohort agent to the batch events that list it", async () => {
+		for (const log of [createMemoryEventLog(), openSqliteEventLog(":memory:")]) {
+			const sim = build(
+				cohortScenario(40, (s) => ({ ...s, policy: { kind: "allAgents" } })),
+				builtinRegistry(),
+				log,
+			);
+			await runTicks(sim, 2);
+			const [agentId] = sim.world.ids("agent");
+			if (agentId === undefined) throw new Error("no agents");
+			const latest = inspectEvents(sim.log, { agentId });
+			expect(latest.ok).toBe(true);
+			if (!latest.ok) continue;
+			expect(latest.value.tick).toBe(1);
+			expect(latest.value.observation).toBeUndefined();
+			expect(latest.value.decision).toBeUndefined();
+			expect(latest.value.observationBatch?.payload.agentIds).toContain(agentId);
+			expect(latest.value.decisionBatch?.payload.agentIds).toContain(agentId);
+			expect(latest.value.chain.map((e) => e.kind)).toEqual([
+				"activation",
+				"observation_batch",
+				"decision_batch",
+			]);
+			expect(latest.value.failures).toEqual([]);
+			for (const effect of latest.value.effects) {
+				expect(effect.op).toBe("setColumn");
+				expect(latest.value.decisionBatch?.eventId).toBe(effect.cause);
+				if (effect.op === "setColumn") expect(effect.ids).toContain(agentId);
+			}
+			const lines = renderInspect(latest.value);
+			expect(lines.some((l) => l.includes("batch action="))).toBe(true);
+			expect(lines.some((l) => l.includes("batch executor=crowd agents=40"))).toBe(true);
+			const first = inspectEvents(sim.log, { agentId, tick: 0 });
+			expect(first.ok && first.value.tick).toBe(0);
+			expect(first.ok && first.value.decisionBatch?.t.tick).toBe(0);
+			expect(sim.log.batchesOf(agentId, { kind: ["decision_batch"] })).toHaveLength(2);
+			const nobody = inspectEvents(sim.log, { agentId: toEntityId("nobody") });
+			expect(nobody.ok).toBe(false);
+			sim.close();
+		}
 	});
 
 	test("cohortRule thresholds the first feature", async () => {

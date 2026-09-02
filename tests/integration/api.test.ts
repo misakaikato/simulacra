@@ -486,6 +486,78 @@ describe("HTTP API", () => {
 		expect([...ticks].sort((a, b) => a - b)).toEqual(ticks);
 	}, 60000);
 
+	test("agents of a cohort executor count decisions from decision_batch events", async () => {
+		const { app } = setup();
+		const cohort = scenarioOf({
+			scenarioId: "crowd",
+			population: {
+				n: 120,
+				fields: [
+					{ name: "stance", dtype: "f64", sampling: { kind: "range", min: -2, max: 2 } },
+					{
+						name: "stubbornness",
+						dtype: "f64",
+						sampling: { kind: "range", min: 0, max: 1 },
+					},
+				],
+			},
+			modules: [{ kind: "socialGraph", options: { meanDegree: 4 } }],
+			executors: [
+				{
+					kind: "cohort",
+					name: "crowd",
+					options: {
+						provider: "rule",
+						features: ["persona.stance"],
+						neighborMean: "persona.stance",
+						virtualActions: ["post", "silent"],
+						transition: { kind: "opinionDynamics" },
+					},
+				},
+			],
+			providers: { rule: { kind: "cohortRule", options: { threshold: 0 } } },
+			instruments: [],
+			steps: [{ kind: "run", ticks: 3 }],
+		});
+		const created = await app.request("/api/runs", json({ scenario: cohort, seed: 5 }));
+		expect(created.status).toBe(201);
+		const done = await waitDone(app, "crowd-s5:0");
+		expect(done.result?.integrity).toMatchObject({ complete: true, failed: 0 });
+		const base = "/api/runs/crowd-s5%3A0";
+		const batches = (await (
+			await app.request(`${base}/events?kind=decision_batch&limit=1000`)
+		).json()) as Event[];
+		expect(batches).toHaveLength(3);
+		expect(
+			(
+				(await (
+					await app.request(`${base}/events?kind=observation_batch,decision_batch`)
+				).json()) as Event[]
+			).map((e) => e.kind),
+		).toEqual([
+			"observation_batch",
+			"decision_batch",
+			"observation_batch",
+			"decision_batch",
+			"observation_batch",
+			"decision_batch",
+		]);
+		expect(
+			(await (await app.request(`${base}/events?kind=decision`)).json()) as Event[],
+		).toEqual([]);
+		const agents = (await (await app.request(`${base}/agents`)).json()) as AgentRow[];
+		expect(agents).toHaveLength(120);
+		expect(agents.reduce((sum, a) => sum + Number(a.columns.decisions), 0)).toBe(
+			done.result?.integrity.activated ?? -1,
+		);
+		expect(agents.every((a) => a.columns.failures === 0)).toBe(true);
+		const listed = batches.flatMap((e) =>
+			e.kind === "decision_batch" ? e.payload.agentIds : [],
+		);
+		for (const agent of agents)
+			expect(agent.columns.decisions).toBe(listed.filter((id) => id === agent.id).length);
+	}, 60000);
+
 	test("example YAML posted verbatim resolves its plugins against the example directory", async () => {
 		const { app } = setup();
 		const examples = (await (await app.request("/api/examples")).json()) as readonly Example[];

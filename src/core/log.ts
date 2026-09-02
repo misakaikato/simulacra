@@ -2,10 +2,24 @@ import { Database } from "bun:sqlite";
 import { mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { silentLogger, type Logger } from "../logging/logger";
-import { compareEvents, digestEvents, isEventKind } from "./events";
+import {
+	BATCH_EVENT_KINDS,
+	compareEvents,
+	digestEvents,
+	isBatchEvent,
+	isEventKind,
+} from "./events";
 import { sha256Hex } from "./hash";
 import type { EventLog } from "./protocols";
-import type { EntityId, Event, EventFilter, EventId, JsonValue, Provenance } from "./types";
+import type {
+	BatchEventFilter,
+	EntityId,
+	Event,
+	EventFilter,
+	EventId,
+	JsonValue,
+	Provenance,
+} from "./types";
 
 export const EVENT_LOG_FILE = "events.sqlite";
 export const eventLogPath = (runDir: string): string => join(runDir, EVENT_LOG_FILE);
@@ -71,6 +85,46 @@ const matches = (e: Event, filter: EventFilter): boolean => {
 	if (filter.toTick !== undefined && e.t.tick > filter.toTick) return false;
 	return true;
 };
+
+const page = (sorted: readonly Event[], filter: BatchEventFilter): readonly Event[] => {
+	const offset = filter.offset ?? 0;
+	const end = filter.limit === undefined ? sorted.length : offset + filter.limit;
+	return sorted.slice(offset, end);
+};
+
+interface SqlWhere {
+	readonly clauses: readonly string[];
+	readonly params: readonly (string | number)[];
+}
+
+const whereOf = (filter: EventFilter): SqlWhere => {
+	const clauses: string[] = [];
+	const params: (string | number)[] = [];
+	if (filter.kind !== undefined) {
+		clauses.push(`kind IN (${filter.kind.map(() => "?").join(", ")})`);
+		params.push(...filter.kind);
+	}
+	if (filter.agentId !== undefined) {
+		clauses.push("agent_id = ?");
+		params.push(filter.agentId);
+	}
+	if (filter.tick !== undefined) {
+		clauses.push("tick = ?");
+		params.push(filter.tick);
+	}
+	if (filter.fromTick !== undefined) {
+		clauses.push("tick >= ?");
+		params.push(filter.fromTick);
+	}
+	if (filter.toTick !== undefined) {
+		clauses.push("tick <= ?");
+		params.push(filter.toTick);
+	}
+	return { clauses, params };
+};
+
+const BATCH_MEMBER_CLAUSE =
+	"EXISTS (SELECT 1 FROM json_each(events.payload, '$.agentIds') WHERE json_each.value = ?)";
 
 type EventRow = {
 	event_id: string;
@@ -202,37 +256,32 @@ class SqliteEventLog implements EventLog {
 	}
 
 	query(filter: EventFilter): readonly Event[] {
-		const clauses: string[] = [];
-		const params: (string | number)[] = [];
-		if (filter.kind !== undefined) {
-			if (filter.kind.length === 0) return [];
-			clauses.push(`kind IN (${filter.kind.map(() => "?").join(", ")})`);
-			params.push(...filter.kind);
-		}
-		if (filter.agentId !== undefined) {
-			clauses.push("agent_id = ?");
-			params.push(filter.agentId);
-		}
-		if (filter.tick !== undefined) {
-			clauses.push("tick = ?");
-			params.push(filter.tick);
-		}
-		if (filter.fromTick !== undefined) {
-			clauses.push("tick >= ?");
-			params.push(filter.fromTick);
-		}
-		if (filter.toTick !== undefined) {
-			clauses.push("tick <= ?");
-			params.push(filter.toTick);
-		}
-		const where = clauses.length > 0 ? `WHERE ${clauses.join(" AND ")}` : "";
+		if (filter.kind !== undefined && filter.kind.length === 0) return [];
+		return this.select(whereOf(filter), filter);
+	}
+
+	batchesOf(agentId: EntityId, filter: BatchEventFilter = {}): readonly Event[] {
+		if (filter.kind !== undefined && filter.kind.length === 0) return [];
+		const kinds = whereOf({ kind: BATCH_EVENT_KINDS });
+		const rest = whereOf(filter);
+		return this.select(
+			{
+				clauses: [...kinds.clauses, BATCH_MEMBER_CLAUSE, ...rest.clauses],
+				params: [...kinds.params, agentId, ...rest.params],
+			},
+			filter,
+		);
+	}
+
+	private select(where: SqlWhere, filter: BatchEventFilter): readonly Event[] {
+		const clause = where.clauses.length > 0 ? `WHERE ${where.clauses.join(" AND ")}` : "";
 		const limit = filter.limit === undefined ? -1 : filter.limit;
 		const offset = filter.offset ?? 0;
 		const rows = this.db
 			.query<EventRow, (string | number)[]>(
-				`SELECT * FROM events ${where} ${ORDER} LIMIT ? OFFSET ?`,
+				`SELECT * FROM events ${clause} ${ORDER} LIMIT ? OFFSET ?`,
 			)
-			.all(...params, limit, offset);
+			.all(...where.params, limit, offset);
 		return rows.map(fromRow);
 	}
 
@@ -312,10 +361,21 @@ class MemoryEventLog implements EventLog {
 	}
 
 	query(filter: EventFilter): readonly Event[] {
-		const sorted = this.events.filter((e) => matches(e, filter)).sort(compareEvents);
-		const offset = filter.offset ?? 0;
-		const end = filter.limit === undefined ? sorted.length : offset + filter.limit;
-		return sorted.slice(offset, end);
+		return page(this.events.filter((e) => matches(e, filter)).sort(compareEvents), filter);
+	}
+
+	batchesOf(agentId: EntityId, filter: BatchEventFilter = {}): readonly Event[] {
+		return page(
+			this.events
+				.filter(
+					(e) =>
+						isBatchEvent(e) &&
+						e.payload.agentIds.includes(agentId) &&
+						matches(e, filter),
+				)
+				.sort(compareEvents),
+			filter,
+		);
 	}
 
 	sql<T>(sql: string): readonly T[] {

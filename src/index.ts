@@ -50,6 +50,7 @@ export type {
 	LLMGateway,
 	Metric,
 	Module,
+	ObserveContext,
 	PluginContext,
 	PluginError,
 	PluginFactory,
@@ -70,6 +71,8 @@ export type {
 	AuditPlanSummary,
 	AuditReport,
 	AuditRunRef,
+	BatchEventFilter,
+	BatchEventKind,
 	ColumnDecl,
 	Condition,
 	ConditionFlag,
@@ -111,7 +114,7 @@ export { describeEffect, renderInspect } from "./core/inspect";
 export type { ReplayResult, ReplayedWorld } from "./core/replay";
 export type { EventHandler } from "./core/bus";
 export { observableLog } from "./core/bus";
-export { EVENT_KINDS, isEventKind } from "./core/events";
+export { BATCH_EVENT_KINDS, EVENT_KINDS, isBatchEvent, isEventKind } from "./core/events";
 export type { ScenarioIssue } from "./core/scenario";
 export type { Logger, LogLevel, LogRecord, LogSink } from "./logging/logger";
 export { createLogger, isLogLevel, levelFromEnv, silentLogger } from "./logging/logger";
