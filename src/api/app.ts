@@ -7,7 +7,7 @@ import { auditRoutes } from "./routes/audits";
 import { examplesRoutes } from "./routes/examples";
 import { healthRoutes } from "./routes/health";
 import { runRoutes } from "./routes/runs";
-import { streamRun } from "./sse";
+import { KEEPALIVE_MS, streamRun } from "./sse";
 
 export const GUI_DIST_DIR = resolve(import.meta.dir, "../../gui/dist");
 const INDEX_HTML = "index.html";
@@ -21,13 +21,23 @@ export interface AppOptions {
 	readonly registry: RunRegistry;
 	readonly logger: Logger;
 	readonly guiDir?: string;
+	readonly sseKeepaliveMs?: number;
 }
+
+export interface ListenOptions {
+	readonly port: number;
+	readonly hostname: string;
+}
+
+export const listen = (app: Hono, opts: ListenOptions): ReturnType<typeof Bun.serve> =>
+	Bun.serve({ port: opts.port, hostname: opts.hostname, idleTimeout: 0, fetch: app.fetch });
 
 export const createApp = (opts: AppOptions): Hono => {
 	const { registry } = opts;
 	const logger = opts.logger.child({ component: "api" });
 	const deps = { registry, logger };
 	const guiDir = opts.guiDir ?? GUI_DIST_DIR;
+	const keepaliveMs = opts.sseKeepaliveMs ?? KEEPALIVE_MS;
 	const app = new Hono();
 
 	app.onError((e, c) => {
@@ -50,7 +60,7 @@ export const createApp = (opts: AppOptions): Hono => {
 		const runId = toRunId(c.req.param("id"));
 		if (registry.getRun(runId) === undefined)
 			return c.json({ error: `unknown run ${c.req.param("id")}` }, 404);
-		return streamRun(c, registry, runId);
+		return streamRun(c, registry, runId, keepaliveMs);
 	});
 	app.route("/api/runs", runRoutes(deps));
 	app.route("/api/audits", auditRoutes(deps));

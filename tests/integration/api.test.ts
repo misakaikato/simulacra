@@ -9,6 +9,7 @@ import {
 	SCENARIO_FILE,
 	createApp,
 	createRunRegistry,
+	listen,
 	loadAuditPlan,
 	parseScenario,
 	silentLogger,
@@ -80,12 +81,14 @@ const scenarioOf = (overrides: JsonObject = {}): Scenario => {
 	return parsed.value;
 };
 
-const slowScenario = (): Scenario =>
+const slowScenario = (delayMs?: number): Scenario =>
 	scenarioOf({
 		scenarioId: "slow",
 		plugins: [SLOW_PLUGIN],
 		population: { n: 5 },
-		providers: { main: { kind: SLOW_KIND } },
+		providers: {
+			main: { kind: SLOW_KIND, ...(delayMs === undefined ? {} : { options: { delayMs } }) },
+		},
 		steps: [{ kind: "run", ticks: 6 }],
 	});
 
@@ -586,6 +589,53 @@ describe("HTTP API", () => {
 		expect(note.status).toBe(200);
 		expect(await note.text()).toContain("build:gui");
 	}, 60000);
+
+	test("over a real server, a slow run keeps the SSE connection alive with comment heartbeats until done", async () => {
+		const registry = createRunRegistry({ dataDir: tempDir(), logger: silentLogger });
+		const app = createApp({ registry, logger: silentLogger, sseKeepaliveMs: 100 });
+		const server = listen(app, { port: 0, hostname: "127.0.0.1" });
+		try {
+			const url = `http://127.0.0.1:${server.port}`;
+			const created = await fetch(`${url}/api/runs`, {
+				...json({ scenario: slowScenario(700), seed: 1, ticks: 3 }),
+			});
+			expect(created.status).toBe(201);
+			expect(await created.json()).toEqual({ runId: "slow-s1:0" });
+			const started = Date.now();
+			const stream = await fetch(`${url}/api/runs/slow-s1%3A0/stream`);
+			expect(stream.status).toBe(200);
+			expect(stream.headers.get("content-type")).toContain("text/event-stream");
+			const text = await stream.text();
+			expect(Date.now() - started).toBeGreaterThan(1500);
+			const heartbeats = text.split("\n").filter((line) => line === ": keepalive");
+			expect(heartbeats.length).toBeGreaterThanOrEqual(5);
+			const received = frames(text).filter((f) => f.event !== "");
+			expect(received.filter((f) => f.event === "event").length).toBeGreaterThan(0);
+			expect(received.at(-1)).toEqual({
+				event: "done",
+				data: JSON.stringify({ runId: "slow-s1:0", status: "succeeded" }),
+			});
+			expect((await waitDone(app, "slow-s1:0")).progress).toEqual({
+				tick: 3,
+				ticks: 3,
+				status: "succeeded",
+			});
+		} finally {
+			server.stop(true);
+		}
+	}, 30000);
+
+	test("simulacra serve rejects a port above 65535", async () => {
+		const proc = Bun.spawn(["bun", CLI, "serve", "--port", "70000", "--data", tempDir()], {
+			cwd: ROOT,
+			env: { ...process.env, NO_PROXY: "127.0.0.1,localhost" },
+			stdout: "pipe",
+			stderr: "pipe",
+		});
+		const [stderr, code] = await Promise.all([new Response(proc.stderr).text(), proc.exited]);
+		expect(code).toBe(1);
+		expect(stderr).toContain("error: --port must be between 0 and 65535");
+	});
 
 	test("simulacra serve listens on the given port and serves the API and GUI", async () => {
 		const dataDir = tempDir();
