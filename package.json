@@ -1,18 +1,19 @@
 {
 	"name": "@misakaikato/simulacra",
 	"version": "0.1.0",
-	"description": "Typed, event-sourced LLM social simulation kernel with a robustness audit harness",
+	"description": "Typed, event-sourced kernel for LLM-driven social simulation with a built-in robustness-audit harness. CLI, HTTP API, MCP server and GUI.",
 	"license": "Apache-2.0",
 	"type": "module",
-	"repository": {
-		"type": "git",
-		"url": "https://github.com/misakaikato/simulacra.git"
-	},
 	"bin": {
 		"simulacra": "src/cli/index.ts"
 	},
+	"types": "./src/index.ts",
 	"exports": {
-		".": "./src/index.ts"
+		".": {
+			"types": "./src/index.ts",
+			"bun": "./src/index.ts",
+			"default": "./src/index.ts"
+		}
 	},
 	"files": [
 		"src",
@@ -24,6 +25,28 @@
 	"engines": {
 		"bun": ">=1.3"
 	},
+	"publishConfig": {
+		"access": "public"
+	},
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/misakaikato/simulacra.git"
+	},
+	"homepage": "https://github.com/misakaikato/simulacra#readme",
+	"bugs": {
+		"url": "https://github.com/misakaikato/simulacra/issues"
+	},
+	"keywords": [
+		"llm",
+		"agent-based-modeling",
+		"social-simulation",
+		"multi-agent",
+		"robustness",
+		"audit",
+		"bun",
+		"typescript",
+		"mcp"
+	],
 	"scripts": {
 		"check": "tsc --noEmit && tsc --noEmit -p gui",
 		"lint": "eslint .",
@@ -33,7 +56,8 @@
 		"simulacra": "bun src/cli/index.ts",
 		"build:gui": "vite build --config gui/vite.config.ts",
 		"dev:gui": "vite --config gui/vite.config.ts",
-		"dev:mock": "bun gui/dev-mock.ts"
+		"dev:mock": "bun gui/dev-mock.ts",
+		"prepublishOnly": "bun run check && bun run lint && bun test && bun run build:gui"
 	},
 	"dependencies": {
 		"@modelcontextprotocol/sdk": "^1.30.0",
