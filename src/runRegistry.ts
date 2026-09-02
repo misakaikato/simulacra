@@ -25,6 +25,7 @@ import {
 	readAuditReport,
 	PLAN_FILE,
 } from "./harness/runner";
+import type { AuditSummary, RunStatus, RunSummary } from "./api/contract";
 import { kernelRunFn, loadScenario, runScenario } from "./index";
 import type { Logger, LogLevel } from "./logging/logger";
 
@@ -37,34 +38,6 @@ const RUN_ID_SEPARATOR = ":";
 const RUN_DIR_SEPARATOR = "__";
 const SAFE_DIR_CHAR = /[A-Za-z0-9._-]/;
 const AUDIT_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
-
-export type RunStatus = "running" | "succeeded" | "failed";
-
-export interface RunProgress {
-	readonly tick: number;
-	readonly ticks: number;
-	readonly status: RunStatus;
-}
-
-export interface RunSummary {
-	readonly runId: RunId;
-	readonly progress: RunProgress;
-	readonly agentCount: number;
-	readonly result?: RunResult;
-}
-
-export interface AuditProgress {
-	readonly completed: number;
-	readonly total: number;
-	readonly status: RunStatus;
-}
-
-export interface AuditSummary {
-	readonly auditId: string;
-	readonly progress: AuditProgress;
-	readonly plan?: AuditPlan;
-	readonly report?: AuditReport;
-}
 
 export type RunMessage =
 	| { readonly kind: "event"; readonly event: Event }

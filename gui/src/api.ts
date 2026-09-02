@@ -1,79 +1,29 @@
 import type {
-	AuditPlan,
-	AuditReport,
-	EntityId,
-	Event as SimEvent,
-	EventId,
-	EventKind,
-	RunId,
-	RunResult,
-	Scalar,
-} from "../../src/core/types";
+	AgentRow,
+	AuditSummary,
+	Example,
+	GraphSnapshot,
+	MetricSeries,
+	NewRun,
+	RunSummary,
+} from "../../src/api/contract";
+import type { EntityId, Event as SimEvent, EventId, EventKind, RunId } from "../../src/core/types";
 
-export type RunStatus = "running" | "succeeded" | "failed";
-
-export interface RunProgress {
-	readonly tick: number;
-	readonly ticks: number;
-	readonly status: RunStatus;
-}
-
-export interface RunSummary {
-	readonly runId: RunId;
-	readonly progress: RunProgress;
-	readonly agentCount: number;
-	readonly result?: RunResult;
-}
-
-export interface Example {
-	readonly name: string;
-	readonly yaml: string;
-}
-
-export type ProviderChoice = "mock" | "llm";
-
-export interface NewRun {
-	readonly scenario: string;
-	readonly seed: number;
-	readonly ticks?: number;
-	readonly provider?: ProviderChoice;
-}
-
-export interface AgentRow {
-	readonly id: EntityId;
-	readonly columns: Readonly<Record<string, Scalar>>;
-}
-
-export interface GraphEdge {
-	readonly src: EntityId;
-	readonly dst: EntityId;
-	readonly kind: string;
-}
-
-export interface GraphSnapshot {
-	readonly tick: number;
-	readonly edges: readonly GraphEdge[];
-}
-
-export interface MetricPoint {
-	readonly tick: number;
-	readonly value: number;
-}
-
-export type MetricSeries = Readonly<Record<string, readonly MetricPoint[]>>;
-
-export interface AuditProgress {
-	readonly completed: number;
-	readonly total: number;
-	readonly status: RunStatus;
-}
-
-export interface AuditSummary {
-	readonly auditId: string;
-	readonly progress: AuditProgress;
-	readonly plan?: AuditPlan;
-	readonly report?: AuditReport;
-}
+export type {
+	AgentRow,
+	AuditProgress,
+	AuditSummary,
+	Example,
+	GraphEdge,
+	GraphSnapshot,
+	MetricPoint,
+	MetricSeries,
+	NewRun,
+	ProviderChoice,
+	RunProgress,
+	RunStatus,
+	RunSummary,
+} from "../../src/api/contract";
 
 export interface EventQuery {
 	readonly kind?: readonly EventKind[];
@@ -111,7 +61,7 @@ const parseJson = (text: string): unknown => {
 
 const issueText = (issue: unknown): string => {
 	if (!isRecord(issue)) return String(issue);
-	const path = Array.isArray(issue.path) ? issue.path.map(String).join(".") : "";
+	const path = typeof issue.path === "string" ? issue.path : "";
 	const message = typeof issue.message === "string" ? issue.message : JSON.stringify(issue);
 	return path === "" ? message : `${path}: ${message}`;
 };

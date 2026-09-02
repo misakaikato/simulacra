@@ -7,6 +7,7 @@ import {
 	examplePath,
 	listExamples,
 	ok,
+	type ApiIssue,
 	type Logger,
 	type Result,
 	type RunRegistry,
@@ -17,17 +18,11 @@ export interface ApiDeps {
 	readonly logger: Logger;
 }
 
-export interface ApiIssue {
-	readonly path: string;
-	readonly message: string;
-}
-
 export type ExampleFile = "scenario.yaml" | "audit.yaml";
 
 export const DEFAULT_PAGE = 200;
 export const MAX_PAGE = 1000;
 
-export const ProviderSchema = z.enum(["mock", "llm"]);
 export const nonNegativeInt = z.coerce.number().int().nonnegative();
 export const positiveInt = z.coerce.number().int().positive();
 

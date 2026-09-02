@@ -16,9 +16,16 @@ import {
 	toEventId,
 	toRunId,
 	withRunLog,
+	NewRunSchema,
+	type AgentRow,
+	type ApiIssue,
 	type Event,
 	type EventFilter,
 	type EventKind,
+	type GraphEdge,
+	type GraphSnapshot,
+	type MetricPoint,
+	type MetricSeries,
 	type Result,
 	type RunId,
 	type Scalar,
@@ -27,7 +34,6 @@ import {
 import {
 	DEFAULT_PAGE,
 	MAX_PAGE,
-	ProviderSchema,
 	badRequest,
 	conflict,
 	exampleDirOf,
@@ -37,15 +43,7 @@ import {
 	positiveInt,
 	readJsonBody,
 	type ApiDeps,
-	type ApiIssue,
 } from "./shared";
-
-const NewRunSchema = z.object({
-	scenario: z.union([z.string().min(1), z.record(z.string(), z.unknown())]),
-	seed: z.number().int(),
-	ticks: z.number().int().positive().optional(),
-	provider: ProviderSchema.optional(),
-});
 
 const EventsQuerySchema = z.object({
 	kind: z.string().optional(),
@@ -101,10 +99,8 @@ const hiddenPersonaColumns = (scenario: Scenario): ReadonlySet<string> =>
 			.map((f) => `${PERSONA_PREFIX}${f.name}`),
 	);
 
-const metricSeries = (
-	events: readonly Event[],
-): Record<string, { tick: number; value: number }[]> => {
-	const series: Record<string, { tick: number; value: number }[]> = {};
+const metricSeries = (events: readonly Event[]): MetricSeries => {
+	const series: Record<string, MetricPoint[]> = {};
 	for (const e of events) {
 		if (e.kind !== "measurement" || typeof e.payload.value !== "number") continue;
 		(series[e.payload.name] ??= []).push({ tick: e.t.tick, value: e.payload.value });
@@ -206,7 +202,7 @@ export const runRoutes = (deps: ApiDeps): Hono => {
 			(row.kind === "decision" ? decisions : failures).set(row.agent_id, row.n);
 		const hidden = hiddenPersonaColumns(scenario.value);
 		const world = replayed.value.world;
-		const rows = world.ids(AGENT_ENTITY).map((id) => {
+		const rows: AgentRow[] = world.ids(AGENT_ENTITY).map((id) => {
 			const columns: Record<string, Scalar> = {};
 			for (const [name, value] of Object.entries(world.row(AGENT_ENTITY, id) ?? {}))
 				if (name.startsWith(PERSONA_PREFIX) && !hidden.has(name)) columns[name] = value;
@@ -225,7 +221,7 @@ export const runRoutes = (deps: ApiDeps): Hono => {
 		const replayed = replayWorld(run.dir, query.data.tick);
 		if (!replayed.ok) return notFound(c, replayed.error);
 		const world = replayed.value.world;
-		const edges: { src: string; dst: string; kind: string }[] = [];
+		const edges: GraphEdge[] = [];
 		if (
 			world.entities.includes(EDGE_ENTITY) &&
 			world.columns(EDGE_ENTITY).some((col) => col.name === EDGE_COLUMNS.src)
@@ -234,9 +230,14 @@ export const runRoutes = (deps: ApiDeps): Hono => {
 			const dst = world.column<string>(EDGE_ENTITY, EDGE_COLUMNS.dst);
 			const kind = world.column<string>(EDGE_ENTITY, EDGE_COLUMNS.kind);
 			for (let i = 0; i < world.count(EDGE_ENTITY); i += 1)
-				edges.push({ src: src.at(i), dst: dst.at(i), kind: kind.at(i) });
+				edges.push({
+					src: toEntityId(src.at(i)),
+					dst: toEntityId(dst.at(i)),
+					kind: kind.at(i),
+				});
 		}
-		return c.json({ tick: replayed.value.tick, edges });
+		const snapshot: GraphSnapshot = { tick: replayed.value.tick, edges };
+		return c.json(snapshot);
 	});
 
 	app.get("/:id/metrics", (c) => {
