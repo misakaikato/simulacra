@@ -4,12 +4,14 @@ import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 import {
 	EVENT_KINDS,
+	NameSchema,
 	doctor,
 	examplePath,
 	inspect,
 	listExamples,
 	loadAuditPlan,
 	loadScenario,
+	namedScenario,
 	ok,
 	parseAuditPlanYaml,
 	renderInspect,
@@ -220,10 +222,11 @@ export const createMcpServer = (opts: McpServerOptions): McpServer => {
 		"run_scenario",
 		{
 			description:
-				"Run a scenario to completion and return its runId with the RunResult summary. Pass either scenarioYaml (YAML text) or example (a built-in example name).",
+				"Run a scenario to completion and return its runId with the RunResult summary. Pass either scenarioYaml (YAML text) or example (a built-in example name). The runId is <name>:0, or <scenarioId>-s<seed>:0 when name is omitted.",
 			inputSchema: {
 				scenarioYaml: z.string().min(1).optional(),
 				example: z.string().min(1).optional(),
+				name: NameSchema.optional(),
 				seed: z.number().int(),
 				ticks: z.number().int().positive().optional(),
 				provider: ProviderSchema.optional(),
@@ -247,17 +250,14 @@ export const createMcpServer = (opts: McpServerOptions): McpServer => {
 			if (!loaded.ok)
 				return failure("invalid scenario", issuesOf(loaded.error, "scenarioYaml"));
 			const started = registry.startRun({
-				scenario: loaded.value,
+				scenario: namedScenario(loaded.value, args.seed, args.name),
 				seed: args.seed,
 				...(args.ticks === undefined ? {} : { ticks: args.ticks }),
 				...(args.provider === undefined ? {} : { provider: args.provider }),
 			});
 			if (!started.ok)
 				return failure(`run ${started.error.runId} already exists`, [
-					{
-						path: "scenarioYaml",
-						message: "change scenarioId or use a fresh data directory",
-					},
+					{ path: "name", message: "pass a different name or seed" },
 				]);
 			logger.info("run started", { runId: started.value.runId });
 			const summary = await awaitRun(registry, started.value.runId);
@@ -343,7 +343,7 @@ export const createMcpServer = (opts: McpServerOptions): McpServer => {
 			inputSchema: {
 				planYaml: z.string().min(1).optional(),
 				examplePlan: z.string().min(1).optional(),
-				name: z.string().min(1).optional(),
+				name: NameSchema.optional(),
 				replications: z.number().int().positive().optional(),
 				provider: ProviderSchema.optional(),
 			},

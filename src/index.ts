@@ -337,7 +337,13 @@ export type {
 	RunStatus,
 	RunSummary,
 } from "./api/contract";
-export { NewAuditSchema, NewRunSchema, ProviderSchema } from "./api/contract";
+export {
+	NAME_PATTERN,
+	NameSchema,
+	NewAuditSchema,
+	NewRunSchema,
+	ProviderSchema,
+} from "./api/contract";
 export type {
 	AuditMessage,
 	RunMessage,
@@ -353,6 +359,7 @@ export {
 	DEFAULT_DATA_DIR,
 	RUNS_DATA_DIR,
 	createRunRegistry,
+	namedScenario,
 	runDirName,
 	totalTicks,
 } from "./runRegistry";

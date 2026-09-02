@@ -272,22 +272,32 @@ describe("HTTP API", () => {
 			json({ scenario: slowScenario(), seed: 1, ticks: 6 }),
 		);
 		expect(created.status).toBe(201);
-		expect(await created.json()).toEqual({ runId: "slow:0" });
+		expect(await created.json()).toEqual({ runId: "slow-s1:0" });
 		const duplicate = await app.request(
 			"/api/runs",
-			json({ scenario: slowScenario(), seed: 2 }),
+			json({ scenario: slowScenario(), seed: 1 }),
 		);
 		expect(duplicate.status).toBe(409);
-		expect(await duplicate.json()).toEqual({ error: "run slow:0 already exists" });
-		const running = (await (await app.request("/api/runs/slow%3A0")).json()) as RunSummary;
-		expect(String(running.runId)).toBe("slow:0");
+		expect(await duplicate.json()).toEqual({
+			error: "run slow-s1:0 already exists; pass a different name or seed",
+		});
+		const badName = await app.request(
+			"/api/runs",
+			json({ scenario: slowScenario(), seed: 1, name: "../x" }),
+		);
+		expect(badName.status).toBe(400);
+		expect((await badName.json()) as { issues: { path: string }[] }).toMatchObject({
+			issues: [{ path: "name" }],
+		});
+		const running = (await (await app.request("/api/runs/slow-s1%3A0")).json()) as RunSummary;
+		expect(String(running.runId)).toBe("slow-s1:0");
 		expect(running.progress.status).toBe("running");
 		expect(running.progress.ticks).toBe(6);
 		expect(running.agentCount).toBe(5);
 		const listed = (await (await app.request("/api/runs")).json()) as RunSummary[];
-		expect(listed.map((r) => String(r.runId))).toEqual(["slow:0"]);
+		expect(listed.map((r) => String(r.runId))).toEqual(["slow-s1:0"]);
 
-		const dropped = await spiedApp.request("/api/runs/slow%3A0/stream");
+		const dropped = await spiedApp.request("/api/runs/slow-s1%3A0/stream");
 		expect(dropped.status).toBe(200);
 		const reader = dropped.body?.getReader();
 		expect(reader).toBeDefined();
@@ -296,32 +306,56 @@ describe("HTTP API", () => {
 		await reader.cancel();
 		await until(async () => unsubscribed === 1, 5000);
 
-		const live = await spiedApp.request("/api/runs/slow%3A0/stream");
+		const live = await spiedApp.request("/api/runs/slow-s1%3A0/stream");
 		expect(live.status).toBe(200);
 		expect(live.headers.get("content-type")).toContain("text/event-stream");
 		const received = frames(await live.text());
 		const events = received.filter((f) => f.event === "event");
 		expect(events.length).toBeGreaterThan(0);
-		expect(String((JSON.parse(events[0]?.data ?? "{}") as Event).runId)).toBe("slow:0");
+		expect(String((JSON.parse(events[0]?.data ?? "{}") as Event).runId)).toBe("slow-s1:0");
 		expect(received.at(-1)).toEqual({
 			event: "done",
-			data: JSON.stringify({ runId: "slow:0", status: "succeeded" }),
+			data: JSON.stringify({ runId: "slow-s1:0", status: "succeeded" }),
 		});
 		expect(unsubscribed).toBe(2);
-		const done = await waitDone(app, "slow:0");
+		const done = await waitDone(app, "slow-s1:0");
 		expect(done.progress).toEqual({ tick: 6, ticks: 6, status: "succeeded" });
 		expect(done.result?.integrity.complete).toBe(true);
 		expect(done.result?.status).toBe("succeeded");
+		const reseeded = await app.request(
+			"/api/runs",
+			json({ scenario: slowScenario(), seed: 2, ticks: 1 }),
+		);
+		expect(reseeded.status).toBe(201);
+		expect(await reseeded.json()).toEqual({ runId: "slow-s2:0" });
+		const named = await app.request(
+			"/api/runs",
+			json({ scenario: slowScenario(), seed: 2, ticks: 1, name: "custom.run" }),
+		);
+		expect(named.status).toBe(201);
+		expect(await named.json()).toEqual({ runId: "custom.run:0" });
+		const sameName = await app.request(
+			"/api/runs",
+			json({ scenario: slowScenario(), seed: 9, ticks: 1, name: "custom.run" }),
+		);
+		expect(sameName.status).toBe(409);
+		expect((await waitDone(app, "slow-s2:0")).result?.seed).toBe(2);
+		expect((await waitDone(app, "custom.run:0")).result?.seed).toBe(2);
+		expect(
+			((await (await app.request("/api/runs")).json()) as RunSummary[]).map((r) =>
+				String(r.runId),
+			),
+		).toEqual(["custom.run:0", "slow-s1:0", "slow-s2:0"]);
 	}, 30000);
 
 	test("run detail routes: events paging, chain, content, agents, graph, metrics and replayed SSE", async () => {
 		const { app } = setup();
 		const created = await app.request("/api/runs", json({ scenario: scenarioOf(), seed: 3 }));
 		expect(created.status).toBe(201);
-		expect(await created.json()).toEqual({ runId: "api:0" });
-		const done = await waitDone(app, "api:0");
+		expect(await created.json()).toEqual({ runId: "api-s3:0" });
+		const done = await waitDone(app, "api-s3:0");
 		expect(done.progress).toEqual({ tick: 4, ticks: 4, status: "succeeded" });
-		const base = "/api/runs/api%3A0";
+		const base = "/api/runs/api-s3%3A0";
 
 		const page = (await (await app.request(`${base}/events`)).json()) as Event[];
 		expect(page).toHaveLength(200);
@@ -441,7 +475,7 @@ describe("HTTP API", () => {
 		);
 		expect(replayed.at(-1)).toEqual({
 			event: "done",
-			data: JSON.stringify({ runId: "api:0", status: "succeeded" }),
+			data: JSON.stringify({ runId: "api-s3:0", status: "succeeded" }),
 		});
 		const ticks = replayed
 			.filter((f) => f.event === "event")
@@ -460,7 +494,7 @@ describe("HTTP API", () => {
 			json({ scenario: pd.yaml, seed: 1, ticks: 3, provider: "mock" }),
 		);
 		expect(created.status).toBe(201);
-		const done = await waitDone(app, "prisoners_dilemma:0");
+		const done = await waitDone(app, "prisoners_dilemma-s1:0");
 		expect(done.progress).toEqual({ tick: 3, ticks: 3, status: "succeeded" });
 		expect(done.result?.metrics.cooperationRate).toBeDefined();
 	}, 30000);
