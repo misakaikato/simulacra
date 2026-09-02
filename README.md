@@ -186,6 +186,8 @@ Measured on an Apple M5 Max with Bun 1.3.11, see `bench/RESULTS.md` for the full
 
 `bun bench/kernel.ts` reproduces the first two rows offline. `SIMULACRA_LLM_API_KEY=... bun bench/llm.ts` reproduces the last two and refreshes the recordings, capped at 150 calls.
 
+Against other frameworks, on the same machine and the same 100,000-agent opinion model over 20 ticks: Mesa 3.5.1 finishes in 1.4 s keeping nothing per agent-tick; the simulacra cohort takes 9.6 s while materializing an observation and a decision event for every agent-tick, and 27.8 s when those two million events are persisted to SQLite. Per LLM decision, the echo chamber prompt is about 730 tokens against roughly 3,400 in the OASIS README baseline; scenario richness differs, so read that as footprint, not fidelity. Details and reproduction commands are in `bench/RESULTS.md`.
+
 ## Development
 
 ```bash
