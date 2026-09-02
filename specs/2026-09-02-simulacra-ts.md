@@ -896,3 +896,10 @@ simulacra/
 - 检查点之后的边界事件记在 `(tick, 0, 1)`（checkpoint 事件占 seq 0），语义与附录 H 一致。
 - `resume` 跳过检查点之后的 intervene/questionnaire 步骤，属已知局限，README 写明。
 - APS 默认参数面向 N ≥ 5000，小 N 需显式给 `alphaB`/`gamma`。
+
+## 附录 K：真实 LLM 性能测试后的裁定
+
+- `LLMSpec.extra?: Record<string, JsonValue>`：原样合并进 `/chat/completions` 请求体（不覆盖 `model`、`messages`、`max_tokens`、`temperature`、`seed`、`response_format`），进入录制键的 `params`。
+- DeepSeek 预设默认 `extra: { thinking: { type: "disabled" } }`（实测 `deepseek-v4-flash` 接受，等价于 `reasoning_effort: "none"`）；推理内容会占用 `max_tokens`，默认关闭以保证结构化输出在小预算下完整；用户可覆盖。
+- `LLMResponse.finishReason?: string`（来自 `choices[0].finish_reason`），录制文件保存；`content` 为空且 `finish_reason === "length"` 时网关返回失败 `truncated`（`retryable: false`），`content` 为空但存在 `reasoning_content` 时返回失败 `empty_content`；两者都进 failure 事件与 `integrity.llmFailures`。
+- `bench/llm.ts` 的 `maxCompletionTokens` 提高到 512。
