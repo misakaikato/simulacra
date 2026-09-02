@@ -914,3 +914,19 @@ simulacra/
 - `EventLog.query` 的 `agentId` 过滤不命中批量事件，属预期；GUI 的 agent 检视对 cohort agent 显示批量事件摘要。
 - 回放不受影响（只折叠 effect 与 module_step）。
 - 目标：100k cohort × 20 tick 的事件数从约 200 万降到每 tick 常数级；`bench/RESULTS.md` 的 Kernel 与 Comparison 段随之更新。
+
+## 附录 M：中英文注释规范
+
+- 每个源码文件（`src/**`、`gui/src/**`、`bench/**`、`examples/**/*.ts`）顶部一段文件头注释：先一到三句英文说明该文件在架构中的职责与关键约束，再一段等义中文。格式：
+
+```ts
+// Single writer for world state: applies effects in arrival order and settles
+// same-tick conflicts by each column's merge rule; nothing else mutates tables.
+// 世界状态的单写者：按到达顺序应用效果，同 tick 冲突按列的 merge 规则裁决；除此之外没有任何代码改表。
+```
+
+- 非显然的逻辑加段落注释（英文一行、中文一行），包括但不限于：tick 循环的顺序与完成断言、AIMD 并发与断路器、录制键的构成、种子谱系派生、合并规则与 dtype 校验、APS 与 topo 的算法步骤、统计公式（MWU 精确枚举、Holm、TVD、W1、Cliff）、力导向布局、SSE 心跳、回放折叠。
+- 密度：文件头必有；正文约每 30 到 60 行一处，只解释"为什么"与"不变量"，不复述代码在做什么；类型定义处解释字段语义而非重复类型。
+- 禁止：过程叙事（"修复了"、"之前是"）、TODO、注释掉的代码、逐行翻译式注释、与代码不一致的注释。
+- 测试文件不加文件头，只在构造复杂夹具处加简短双语注释。
+- 注释变更单独成提交：`📝 docs(<scope>): bilingual comments for <scope>`。
