@@ -74,15 +74,6 @@ const issuesOf = (
 const runUri = (runId: RunId): string => RUN_RESULT_TEMPLATE.replace("{runId}", String(runId));
 const auditUri = (auditId: string): string => AUDIT_REPORT_TEMPLATE.replace("{auditId}", auditId);
 
-const variable = (value: string | string[] | undefined): string => {
-	const raw = Array.isArray(value) ? (value[0] ?? "") : (value ?? "");
-	try {
-		return decodeURIComponent(raw);
-	} catch {
-		return raw;
-	}
-};
-
 const runLines = (summary: RunSummary): readonly string[] => {
 	const { progress, result } = summary;
 	const lines = [
@@ -193,6 +184,18 @@ export const createMcpServer = (opts: McpServerOptions): McpServer => {
 	const { registry } = opts;
 	const logger = opts.logger.child({ component: "mcp" });
 	const server = new McpServer({ name: "simulacra", version });
+	const variable = (value: string | string[] | undefined): string => {
+		const raw = Array.isArray(value) ? (value[0] ?? "") : (value ?? "");
+		try {
+			return decodeURIComponent(raw);
+		} catch (e) {
+			logger.warn("resource variable is not valid percent-encoding, using it verbatim", {
+				raw,
+				error: e instanceof Error ? e.message : String(e),
+			});
+			return raw;
+		}
+	};
 
 	server.registerTool(
 		"list_examples",

@@ -14,6 +14,7 @@ export interface RunSummary {
 	readonly progress: RunProgress;
 	readonly agentCount: number;
 	readonly result?: RunResult;
+	readonly error?: string;
 }
 
 export interface AuditProgress {
@@ -27,6 +28,7 @@ export interface AuditSummary {
 	readonly progress: AuditProgress;
 	readonly plan?: AuditPlan;
 	readonly report?: AuditReport;
+	readonly error?: string;
 }
 
 export interface Example {

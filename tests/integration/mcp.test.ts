@@ -6,12 +6,15 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import {
+	createLogger,
 	createMcpServer,
 	createRunRegistry,
 	silentLogger,
 	type Event,
 	type InspectResult,
+	type Logger,
 } from "../../src/index";
+import { memorySink } from "../../src/logging/sinks";
 
 process.env.NO_PROXY ??= "127.0.0.1,localhost";
 
@@ -31,11 +34,11 @@ interface ToolReply {
 	readonly json: unknown;
 }
 
-const connect = async (): Promise<Client> => {
+const connect = async (logger: Logger = silentLogger): Promise<Client> => {
 	const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
 	const server = createMcpServer({
-		registry: createRunRegistry({ dataDir: tempDir(), logger: silentLogger }),
-		logger: silentLogger,
+		registry: createRunRegistry({ dataDir: tempDir(), logger }),
+		logger,
 	});
 	await server.connect(serverTransport);
 	const client = new Client({ name: "simulacra-test", version: "0.0.0" });
@@ -223,6 +226,18 @@ describe("MCP server", () => {
 		});
 		await client.close();
 	}, 30000);
+
+	test("a resource variable that is not valid percent-encoding is used verbatim and logged", async () => {
+		const sink = memorySink();
+		const client = await connect(createLogger({ level: "warn", sinks: [sink] }));
+		await expect(
+			client.readResource({ uri: "simulacra://runs/%E0%A4%A/result" }),
+		).rejects.toThrow("unknown run %E0%A4%A");
+		const warning = sink.records.find((r) => r.level === "warn");
+		expect(warning?.msg).toContain("percent-encoding");
+		expect(warning?.data).toMatchObject({ raw: "%E0%A4%A" });
+		await client.close();
+	});
 
 	test("runs an example audit plan to completion and exposes the report as a resource", async () => {
 		const client = await connect();

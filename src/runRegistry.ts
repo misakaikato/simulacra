@@ -19,6 +19,7 @@ import type {
 import { generateConditions } from "./harness/conditions";
 import { parseAuditPlan, planHash } from "./harness/plan";
 import {
+	AUDIT_FILE,
 	audit,
 	effectivePlan,
 	failedRunResult,
@@ -121,6 +122,8 @@ export const runDirName = (runId: RunId): string =>
 export const totalTicks = (scenario: Scenario): number =>
 	scenario.steps.reduce((sum, step) => (step.kind === "run" ? sum + step.ticks : sum), 0);
 
+const reasonOf = (e: unknown): string => (e instanceof Error ? e.message : String(e));
+
 const describeError = (e: unknown): FailureInfo => ({
 	stage: "run",
 	excType: e instanceof Error ? e.name : "Error",
@@ -135,15 +138,16 @@ const isRunResult = (raw: unknown): raw is RunResult =>
 	((raw as { status?: unknown }).status === "succeeded" ||
 		(raw as { status?: unknown }).status === "failed");
 
-const readRunResult = (dir: string): RunResult | undefined => {
+const readRunResult = (dir: string): Result<RunResult | undefined, string> => {
 	const path = join(dir, RESULT_FILE);
-	if (!existsSync(path)) return undefined;
+	if (!existsSync(path)) return ok(undefined);
+	let raw: unknown;
 	try {
-		const raw: unknown = JSON.parse(readFileSync(path, "utf8"));
-		return isRunResult(raw) ? raw : undefined;
-	} catch {
-		return undefined;
+		raw = JSON.parse(readFileSync(path, "utf8"));
+	} catch (e) {
+		return err(`${path}: ${reasonOf(e)}`);
 	}
+	return isRunResult(raw) ? ok(raw) : err(`${path}: not a RunResult`);
 };
 
 const subdirectories = (dir: string): readonly string[] =>
@@ -161,24 +165,33 @@ const summaryOfEntry = (entry: RunEntry): RunSummary => ({
 	...(entry.result === undefined ? {} : { result: entry.result }),
 });
 
-const summaryOfDir = (dir: string): RunSummary | undefined => {
+const summaryOfDir = (dir: string, logger: Logger): RunSummary | undefined => {
 	const scenario = readRunScenario(dir);
-	if (!scenario.ok) return undefined;
+	if (!scenario.ok) {
+		logger.error("run directory unreadable", { dir, error: scenario.error });
+		return undefined;
+	}
 	const ticks = totalTicks(scenario.value);
 	const agentCount = scenario.value.population.n;
-	const result = readRunResult(dir);
-	if (result === undefined)
-		return {
-			runId: makeRunId(scenario.value.scenarioId, scenario.value.replicationId),
-			progress: { tick: 0, ticks, status: "failed" },
-			agentCount,
-		};
-	const tick = result.status === "succeeded" ? ticks : (result.failure?.at?.tick ?? 0);
-	return {
-		runId: result.runId,
-		progress: { tick, ticks, status: result.status },
+	const runId = makeRunId(scenario.value.scenarioId, scenario.value.replicationId);
+	const aborted: RunSummary = {
+		runId,
+		progress: { tick: 0, ticks, status: "failed" },
 		agentCount,
-		result,
+	};
+	const result = readRunResult(dir);
+	if (!result.ok) {
+		logger.error("result.json unreadable", { dir, error: result.error });
+		return { ...aborted, error: result.error };
+	}
+	if (result.value === undefined) return aborted;
+	const tick =
+		result.value.status === "succeeded" ? ticks : (result.value.failure?.at?.tick ?? 0);
+	return {
+		runId: result.value.runId,
+		progress: { tick, ticks, status: result.value.status },
+		agentCount,
+		result: result.value,
 	};
 };
 
@@ -189,24 +202,37 @@ const auditSummaryOfEntry = (entry: AuditEntry): AuditSummary => ({
 	...(entry.report === undefined ? {} : { report: entry.report }),
 });
 
-const readPlan = (dir: string): AuditPlan | undefined => {
+const readPlan = (dir: string): Result<AuditPlan | undefined, string> => {
 	const path = join(dir, PLAN_FILE);
-	if (!existsSync(path)) return undefined;
+	if (!existsSync(path)) return ok(undefined);
+	let raw: unknown;
 	try {
-		const parsed = parseAuditPlan(JSON.parse(readFileSync(path, "utf8")), {
-			baseDir: dir,
-			loadScenario,
-		});
-		return parsed.ok ? parsed.value : undefined;
-	} catch {
-		return undefined;
+		raw = JSON.parse(readFileSync(path, "utf8"));
+	} catch (e) {
+		return err(`${path}: ${reasonOf(e)}`);
 	}
+	const parsed = parseAuditPlan(raw, { baseDir: dir, loadScenario });
+	return parsed.ok
+		? ok(parsed.value)
+		: err(`${path}: ${parsed.error.map((i) => `${i.path.join(".")} ${i.message}`).join("; ")}`);
 };
 
-const auditSummaryOfDir = (auditId: string, dir: string): AuditSummary => {
+const auditSummaryOfDir = (auditId: string, dir: string, logger: Logger): AuditSummary => {
+	const errors: string[] = [];
 	const plan = readPlan(dir);
-	const report = readAuditReport(dir);
-	if (report.ok)
+	if (!plan.ok) {
+		logger.error("plan.json unreadable", { dir, error: plan.error });
+		errors.push(plan.error);
+	}
+	const planValue = plan.ok ? plan.value : undefined;
+	const report = existsSync(join(dir, AUDIT_FILE)) ? readAuditReport(dir) : undefined;
+	if (report !== undefined && !report.ok) {
+		logger.error("audit.json unreadable", { dir, error: report.error });
+		errors.push(report.error);
+	}
+	const withPlan = planValue === undefined ? {} : { plan: planValue };
+	const withError = errors.length === 0 ? {} : { error: errors.join("; ") };
+	if (report !== undefined && report.ok)
 		return {
 			auditId,
 			progress: {
@@ -214,18 +240,20 @@ const auditSummaryOfDir = (auditId: string, dir: string): AuditSummary => {
 				total: report.value.runs.length,
 				status: "succeeded",
 			},
-			...(plan === undefined ? {} : { plan }),
+			...withPlan,
 			report: report.value,
+			...withError,
 		};
-	const conditions = plan === undefined ? undefined : generateConditions(plan);
+	const conditions = planValue === undefined ? undefined : generateConditions(planValue);
 	const total =
-		plan !== undefined && conditions !== undefined && conditions.ok
-			? conditions.value.length * plan.replications
+		planValue !== undefined && conditions !== undefined && conditions.ok
+			? conditions.value.length * planValue.replications
 			: 0;
 	return {
 		auditId,
 		progress: { completed: 0, total, status: "failed" },
-		...(plan === undefined ? {} : { plan }),
+		...withPlan,
+		...withError,
 	};
 };
 
@@ -404,7 +432,7 @@ export const createRunRegistry = (opts: RunRegistryOptions): RunRegistry => {
 		listRuns() {
 			const out = new Map<RunId, RunSummary>();
 			for (const name of subdirectories(runsDir)) {
-				const summary = summaryOfDir(join(runsDir, name));
+				const summary = summaryOfDir(join(runsDir, name), logger);
 				if (summary !== undefined) out.set(summary.runId, summary);
 			}
 			for (const entry of runs.values()) out.set(entry.runId, summaryOfEntry(entry));
@@ -417,13 +445,13 @@ export const createRunRegistry = (opts: RunRegistryOptions): RunRegistry => {
 			if (entry !== undefined) return summaryOfEntry(entry);
 			const dir = runDir(runId);
 			if (!existsSync(dir)) return undefined;
-			const summary = summaryOfDir(dir);
+			const summary = summaryOfDir(dir, logger);
 			return summary !== undefined && summary.runId === runId ? summary : undefined;
 		},
 		listAudits() {
 			const out = new Map<string, AuditSummary>();
 			for (const name of subdirectories(auditsDir))
-				out.set(name, auditSummaryOfDir(name, join(auditsDir, name)));
+				out.set(name, auditSummaryOfDir(name, join(auditsDir, name), logger));
 			for (const entry of audits.values()) out.set(entry.auditId, auditSummaryOfEntry(entry));
 			return [...out.values()].sort((a, b) => a.auditId.localeCompare(b.auditId));
 		},
@@ -432,7 +460,7 @@ export const createRunRegistry = (opts: RunRegistryOptions): RunRegistry => {
 			if (entry !== undefined) return auditSummaryOfEntry(entry);
 			if (!AUDIT_NAME.test(auditId)) return undefined;
 			const dir = auditDir(auditId);
-			return existsSync(dir) ? auditSummaryOfDir(auditId, dir) : undefined;
+			return existsSync(dir) ? auditSummaryOfDir(auditId, dir, logger) : undefined;
 		},
 		subscribe(runId, handler) {
 			const entry = runs.get(runId);

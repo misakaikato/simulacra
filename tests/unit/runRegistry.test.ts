@@ -1,12 +1,16 @@
 import { describe, expect, test } from "bun:test";
-import { existsSync, mkdtempSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { AuditPlanSchema } from "../../src/core/schema";
+import { memorySink } from "../../src/logging/sinks";
 import type { AuditPlan, Event, JsonObject, RunId, Scenario } from "../../src/core/types";
 import {
 	AUDIT_FILE,
+	PLAN_FILE,
 	RESULT_FILE,
+	SCENARIO_FILE,
+	createLogger,
 	createRunRegistry,
 	makeRunId,
 	parseScenario,
@@ -125,6 +129,38 @@ describe("run registry", () => {
 		expect(reopened.listRuns()).toEqual([done]);
 		expect(reopened.getRun(toRunId("nope:0"))).toBeUndefined();
 		expect(reopened.startRun({ scenario: scenarioOf() }).ok).toBe(false);
+	});
+
+	test("unreadable result.json and plan.json are reported as failed entries with an error and logged", () => {
+		const dataDir = tempDir();
+		const sink = memorySink();
+		const logger = createLogger({ level: "error", sinks: [sink] });
+		const runDir = join(dataDir, "runs", "x__0");
+		mkdirSync(runDir, { recursive: true });
+		writeFileSync(join(runDir, SCENARIO_FILE), JSON.stringify(scenarioOf({ scenarioId: "x" })));
+		writeFileSync(join(runDir, RESULT_FILE), "{");
+		const auditDir = join(dataDir, "audits", "bad");
+		mkdirSync(auditDir, { recursive: true });
+		writeFileSync(join(auditDir, PLAN_FILE), "{");
+		writeFileSync(join(auditDir, AUDIT_FILE), "not json");
+		const registry = createRunRegistry({ dataDir, logger });
+		const runs = registry.listRuns();
+		expect(runs).toHaveLength(1);
+		expect(runs[0]?.progress).toEqual({ tick: 0, ticks: 4, status: "failed" });
+		expect(runs[0]?.error).toContain(join(runDir, RESULT_FILE));
+		expect(runs[0]?.result).toBeUndefined();
+		expect(registry.getRun(toRunId("x:0"))?.error).toBe(runs[0]?.error ?? "");
+		const audits = registry.listAudits();
+		expect(audits).toHaveLength(1);
+		expect(audits[0]?.progress.status).toBe("failed");
+		expect(audits[0]?.error).toContain(join(auditDir, PLAN_FILE));
+		expect(audits[0]?.error).toContain(join(auditDir, AUDIT_FILE));
+		expect(audits[0]?.plan).toBeUndefined();
+		expect(audits[0]?.report).toBeUndefined();
+		const messages = sink.records.filter((r) => r.level === "error").map((r) => r.msg);
+		expect(messages).toContain("result.json unreadable");
+		expect(messages).toContain("plan.json unreadable");
+		expect(messages).toContain("audit.json unreadable");
 	});
 
 	test("a run that cannot start is recorded as failed and persisted", async () => {
