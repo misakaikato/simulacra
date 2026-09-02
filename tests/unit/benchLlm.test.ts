@@ -5,12 +5,13 @@ import { basename, join } from "node:path";
 import { parse, stringify } from "yaml";
 import {
 	LLM_BENCH_CASES,
+	MAX_COMPLETION_TOKENS,
 	MAX_TOTAL_CALLS,
 	benchLlmOverride,
 	benchScenario,
 	runBench,
 } from "../../bench/llm";
-import { EXAMPLES_DIR, digest, runScenario } from "../../src/index";
+import { DEEPSEEK_EXTRA, EXAMPLES_DIR, digest, runScenario } from "../../src/index";
 
 process.env.NO_PROXY ??= "127.0.0.1,localhost";
 
@@ -46,6 +47,7 @@ const exampleCopy = (): string => {
 };
 
 interface DecisionRequestBody {
+	readonly max_tokens?: number;
 	readonly response_format?: {
 		readonly json_schema?: {
 			readonly schema?: {
@@ -59,12 +61,16 @@ const PREFERRED_ACTIONS = ["silent", "cooperate"];
 
 const fakeEndpoint = () => {
 	let calls = 0;
+	let sawThinking = false;
+	const maxTokens = new Set<number | undefined>();
 	const server = Bun.serve({
 		port: 0,
 		hostname: "127.0.0.1",
 		fetch: async (req) => {
 			calls += 1;
 			const body = (await req.json()) as DecisionRequestBody;
+			sawThinking ||= "thinking" in body;
+			maxTokens.add(body.max_tokens);
 			const space = body.response_format?.json_schema?.schema?.properties?.action?.enum ?? [];
 			const action = PREFERRED_ACTIONS.find((a) => space.includes(a)) ?? space[0] ?? "noop";
 			return Response.json({
@@ -74,6 +80,7 @@ const fakeEndpoint = () => {
 						message: {
 							content: JSON.stringify({ action, args: {}, rationale: "smoke" }),
 						},
+						finish_reason: "stop",
 					},
 				],
 				usage: {
@@ -86,8 +93,12 @@ const fakeEndpoint = () => {
 	});
 	return {
 		baseUrl: `http://127.0.0.1:${server.port}/v1`,
+		maxTokens,
 		get calls() {
 			return calls;
+		},
+		get sawThinking() {
+			return sawThinking;
 		},
 		stop: () => server.stop(true),
 	};
@@ -117,6 +128,7 @@ describe("bench/llm", () => {
 				expect(row.complete).toBe(true);
 				expect(row.llmFailures).toBe(0);
 				expect(row.parseFailures).toBe(0);
+				expect(row.truncated).toBe(0);
 				expect(row.llmCalls).toBeGreaterThan(0);
 				expect(row.digest).toMatch(/^[0-9a-f]{64}$/);
 				const recorded = jsonFiles(join(root, "examples", row.name, RECORDINGS));
@@ -129,9 +141,12 @@ describe("bench/llm", () => {
 			expect(echo?.cachedTokens).toBeGreaterThan(0);
 			expect(totalCalls).toBe(ep.calls);
 			expect(totalCalls).toBeLessThanOrEqual(MAX_TOTAL_CALLS);
+			expect(ep.sawThinking).toBe(false);
+			expect([...ep.maxTokens]).toEqual([MAX_COMPLETION_TOKENS]);
 			const md = readFileSync(out, "utf8");
 			expect(md).toContain("## LLM");
 			expect(md).toContain("- model: fake");
+			expect(md).toContain("| truncated |");
 			expect(md).toContain("| prisoners_dilemma | 2 | 5 | 5 |");
 			expect(md).toContain(`| echo_chamber | 20 | 3 | ${echo?.llmCalls} |`);
 			expect(md).toContain(`total llmCalls: ${totalCalls} (budget ${MAX_TOTAL_CALLS})`);
@@ -175,6 +190,27 @@ describe("bench/llm", () => {
 			ep.stop();
 		}
 	}, 60000);
+
+	test("benchLlmOverride carries the endpoint's extra and the bench budget", () => {
+		const first = LLM_BENCH_CASES[0];
+		expect(first).toBeDefined();
+		if (first === undefined) return;
+		const real = benchScenario(ROOT, first);
+		expect(real.ok).toBe(true);
+		if (!real.ok) return;
+		const plain = benchLlmOverride(first, real.value.llm, { mode: "record" });
+		expect(plain.extra).toBeUndefined();
+		expect(plain.budget).toEqual({
+			maxCalls: first.maxCalls,
+			maxCompletionTokens: MAX_COMPLETION_TOKENS,
+		});
+		const withExtra = benchLlmOverride(first, real.value.llm, {
+			mode: "replay",
+			extra: DEEPSEEK_EXTRA,
+		});
+		expect(withExtra.extra).toEqual(DEEPSEEK_EXTRA);
+		expect(withExtra.mode).toBe("replay");
+	});
 
 	test("benchScenario reports a missing example instead of parsing the path as YAML", () => {
 		const first = LLM_BENCH_CASES[0];

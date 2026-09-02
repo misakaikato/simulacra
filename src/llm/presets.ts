@@ -4,8 +4,14 @@ import type { LLMSpec } from "../core/types";
 const LOCAL_CONCURRENCY = { initial: 4, max: 8 } as const;
 const LOCAL_MODEL = "default";
 
+export const DEEPSEEK_EXTRA = { thinking: { type: "disabled" } } as const;
+
 export const deepseek = (): LLMSpec =>
-	LLMSpecSchema.parse({ baseUrl: "https://api.deepseek.com/v1", model: "deepseek-v4-flash" });
+	LLMSpecSchema.parse({
+		baseUrl: "https://api.deepseek.com/v1",
+		model: "deepseek-v4-flash",
+		extra: DEEPSEEK_EXTRA,
+	});
 
 export const mlxLm = (baseUrl: string): LLMSpec =>
 	LLMSpecSchema.parse({

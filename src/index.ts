@@ -128,6 +128,8 @@ export {
 } from "./doctor";
 export type { ProbeCheck, ProbeOptions, ProbeResult } from "./llm/probe";
 export { PROBE_MAX_CALLS, probeEndpoint } from "./llm/probe";
+export { DEEPSEEK_EXTRA, deepseek, lmStudio, mlxLm } from "./llm/presets";
+export { FAILURE_TYPES, PARSE_FAILURE_TYPES, type FailureType } from "./core/failures";
 export { EXAMPLES_DIR, copyExample, examplePath, listExamples } from "./examples";
 export { ActionRejected, defineAction, zodToJsonSchema } from "./core/actions";
 export { loadCheckpoint, saveCheckpoint } from "./core/checkpoint";
