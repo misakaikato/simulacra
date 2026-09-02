@@ -64,6 +64,8 @@ import type {
 import { createWorld } from "./world";
 
 export const RECORDINGS_DIR = "recordings";
+export const PROVIDER_INSTRUMENT_PREFIX = "provider:";
+export const PROVIDER_METRIC_PREFIX = "provider.";
 export const MAX_CONSECUTIVE_BATCH_FAILURES = 3;
 export const MAX_CONSECUTIVE_MODULE_FAILURES = 3;
 const MANUAL = "manual";
@@ -242,6 +244,9 @@ class KernelSimulation implements Simulation {
 	private readonly moduleSlots: readonly ModuleSlot[];
 	private readonly executorSlots: ExecutorSlot[];
 	private readonly providers: ReadonlyMap<string, DecisionProvider>;
+	private readonly providerNames: ReadonlyMap<DecisionProvider, string>;
+	private readonly downstreams: ReadonlyMap<string, ReadonlySet<string>>;
+	private readonly decided = new Set<string>();
 	private policy: ActivationPolicy;
 	private readonly instruments: readonly Instrument[];
 	private readonly questionnaires: ReadonlyMap<string, Questionnaire>;
@@ -278,6 +283,7 @@ class KernelSimulation implements Simulation {
 		readonly modules: ReadonlyMap<string, Module>;
 		readonly executors: readonly ExecutorSlot[];
 		readonly providers: ReadonlyMap<string, DecisionProvider>;
+		readonly downstreams: ReadonlyMap<string, ReadonlySet<string>>;
 		readonly policy: ActivationPolicy;
 		readonly instruments: readonly Instrument[];
 		readonly questionnaires: ReadonlyMap<string, Questionnaire>;
@@ -304,6 +310,10 @@ class KernelSimulation implements Simulation {
 		}));
 		this.executorSlots = [...parts.executors];
 		this.providers = parts.providers;
+		this.providerNames = new Map(
+			[...parts.providers].map(([name, provider]) => [provider, name] as const),
+		);
+		this.downstreams = parts.downstreams;
 		this.policy = parts.policy;
 		this.instruments = parts.instruments;
 		this.questionnaires = parts.questionnaires;
@@ -450,6 +460,7 @@ class KernelSimulation implements Simulation {
 		this.tickLogger = this.logger.child({ tick });
 		const before = { ...this.counts };
 		let runFailure: FailureInfo | undefined;
+		this.decided.clear();
 		this.log.beginTick();
 		try {
 			const activation =
@@ -575,6 +586,7 @@ class KernelSimulation implements Simulation {
 
 			this.clock.advanceSubstep();
 			this.measure(tick, activationEvent.eventId);
+			this.auditProviders(activationEvent.eventId, tickRng);
 
 			this.assertComplete(tick, activation);
 		} catch (e) {
@@ -1047,6 +1059,7 @@ class KernelSimulation implements Simulation {
 			| undefined;
 		if (requests.length > 0) {
 			const graph = this.graph();
+			this.decided.add(this.providerNames.get(provider) ?? provider.name);
 			try {
 				results = await provider.decide(requests, {
 					t: this.clock.now,
@@ -1573,6 +1586,65 @@ class KernelSimulation implements Simulation {
 		}
 	}
 
+	// Providers that decided this tick, followed by the downstream chains they were assembled from
+	private participants(): readonly string[] {
+		const out: string[] = [];
+		const visit = (name: string): void => {
+			if (out.includes(name)) return;
+			out.push(name);
+			for (const next of this.downstreams.get(name) ?? []) visit(next);
+		};
+		for (const name of this.decided) visit(name);
+		return out;
+	}
+
+	private auditProviders(activationEvent: EventId, tickRng: Rng): void {
+		const graph = this.graph();
+		const ctx = {
+			t: this.clock.now,
+			runId: this.runId,
+			seedPath: tickRng.path,
+			world: this.world,
+			log: this.log,
+			...(graph === undefined ? {} : { graph }),
+		};
+		for (const name of this.participants()) {
+			const provider = this.providers.get(name);
+			if (provider === undefined) continue;
+			try {
+				const report = provider.audit?.(ctx);
+				if (report === undefined) continue;
+				for (const [key, value] of Object.entries(report)) {
+					if (!Number.isFinite(value)) continue;
+					this.lastMeasurements.set(`${PROVIDER_METRIC_PREFIX}${name}.${key}`, value);
+					this.emit(
+						{
+							kind: "measurement",
+							payload: {
+								instrument: `${PROVIDER_INSTRUMENT_PREFIX}${name}`,
+								name: key,
+								value,
+							},
+						},
+						{ parent: activationEvent, provenance: "kernel" },
+					);
+				}
+			} catch (e) {
+				const d = describeError(e);
+				this.recordFailure(
+					{
+						stage: "measure",
+						excType: d.excType,
+						message: `provider '${name}' audit: ${d.message}`,
+						stack: d.stack,
+						retryable: false,
+					},
+					{ parent: activationEvent },
+				);
+			}
+		}
+	}
+
 	// Boundary steps record at substep 0 before the tick starts; only in-tick events count.
 	private assertComplete(tick: number, activation: Activation): void {
 		const decisions = new Map<string, number>();
@@ -1701,7 +1773,15 @@ export const createSimulation = (
 	}
 	const providers = new Map<string, DecisionProvider>();
 	const constructing: string[] = [];
+	// Composite providers resolve their downstreams while being constructed; the edges feed audit()
+	const downstreams = new Map<string, Set<string>>();
 	const resolveProvider = (name: string): Result<DecisionProvider, ProviderResolveError> => {
+		const requester = constructing[constructing.length - 1];
+		if (requester !== undefined) {
+			const edges = downstreams.get(requester) ?? new Set<string>();
+			edges.add(name);
+			downstreams.set(requester, edges);
+		}
 		const existing = providers.get(name);
 		if (existing !== undefined) return ok(existing);
 		const spec = effective.providers[name];
@@ -1883,6 +1963,7 @@ export const createSimulation = (
 		modules,
 		executors,
 		providers,
+		downstreams,
 		policy: policy.value,
 		instruments,
 		questionnaires,
