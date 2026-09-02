@@ -903,3 +903,14 @@ simulacra/
 - DeepSeek 预设默认 `extra: { thinking: { type: "disabled" } }`（实测 `deepseek-v4-flash` 接受，等价于 `reasoning_effort: "none"`）；推理内容会占用 `max_tokens`，默认关闭以保证结构化输出在小预算下完整；用户可覆盖。
 - `LLMResponse.finishReason?: string`（来自 `choices[0].finish_reason`），录制文件保存；`content` 为空且 `finish_reason === "length"` 时网关返回失败 `truncated`（`retryable: false`），`content` 为空但存在 `reasoning_content` 时返回失败 `empty_content`；两者都进 failure 事件与 `integrity.llmFailures`。
 - `bench/llm.ts` 的 `maxCompletionTokens` 提高到 512。
+
+## 附录 L：Cohort 事件按 tick 聚合
+
+- 新增两种事件 kind：`observation_batch` 与 `decision_batch`。执行体通过 `Executor.batchEvents: true` 声明使用（CohortExecutor 默认 true，FocalExecutor 不用）。
+- `observation_batch.payload = { executor, agentIds: EntityId[], count, featuresSha?: string }`，`featuresSha` 指向内容存储里的特征矩阵 JSON（可选，选项 `recordFeatures` 默认 false 以省内存与时间）；事件无 `agentId`，`parent` 为本 tick 的 activation 事件。
+- `decision_batch.payload = { executor, provider, agentIds: EntityId[], actions: string[]（与 agentIds 对齐）, provenance, parseFailures: number, cost }`；`parent` 为对应 `observation_batch`。单个 agent 的失败仍写逐 agent 的 `failure` 事件。
+- 完成断言与 `Integrity` 的 `activated/ok/failed/parseFailures` 对批量执行体按批量事件的 `agentIds` 长度与 failure 事件计数，不再要求逐 agent 的 decision 事件；`digest` 规则不变。
+- `inspect`/`chain` 对批量执行体的 agent：返回包含该 agent 的批量事件（按 tick 与 `agentIds` 包含判断，实现可用 SQLite `json_each`）与相关 effect 事件；`API /agents` 的 `decisions` 计数对批量执行体从 `decision_batch` 累计。
+- `EventLog.query` 的 `agentId` 过滤不命中批量事件，属预期；GUI 的 agent 检视对 cohort agent 显示批量事件摘要。
+- 回放不受影响（只折叠 effect 与 module_step）。
+- 目标：100k cohort × 20 tick 的事件数从约 200 万降到每 tick 常数级；`bench/RESULTS.md` 的 Kernel 与 Comparison 段随之更新。
