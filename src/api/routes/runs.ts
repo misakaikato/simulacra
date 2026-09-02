@@ -6,6 +6,7 @@ import {
 	EDGE_ENTITY,
 	PERSONA_PREFIX,
 	isEventKind,
+	namedScenario,
 	ok,
 	parseScenario,
 	parseScenarioYaml,
@@ -129,12 +130,16 @@ export const runRoutes = (deps: ApiDeps): Hono => {
 		const scenario = scenarioOf(parsed.data.scenario);
 		if (!scenario.ok) return badRequest(c, scenario.error);
 		const started = registry.startRun({
-			scenario: scenario.value,
+			scenario: namedScenario(scenario.value, parsed.data.seed, parsed.data.name),
 			seed: parsed.data.seed,
 			...(parsed.data.ticks === undefined ? {} : { ticks: parsed.data.ticks }),
 			...(parsed.data.provider === undefined ? {} : { provider: parsed.data.provider }),
 		});
-		if (!started.ok) return conflict(c, `run ${started.error.runId} already exists`);
+		if (!started.ok)
+			return conflict(
+				c,
+				`run ${started.error.runId} already exists; pass a different name or seed`,
+			);
 		return c.json({ runId: started.value.runId }, 201);
 	});
 

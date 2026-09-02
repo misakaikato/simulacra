@@ -119,6 +119,12 @@ export const runDirName = (runId: RunId): string =>
 		)
 		.join("");
 
+export const namedScenario = (scenario: Scenario, seed: number, name?: string): Scenario => ({
+	...scenario,
+	scenarioId: name ?? `${scenario.scenarioId}-s${seed}`,
+	seed,
+});
+
 export const totalTicks = (scenario: Scenario): number =>
 	scenario.steps.reduce((sum, step) => (step.kind === "run" ? sum + step.ticks : sum), 0);
 

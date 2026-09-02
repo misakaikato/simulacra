@@ -39,10 +39,19 @@ export interface Example {
 export const ProviderSchema = z.enum(["mock", "llm"]);
 export type ProviderChoice = z.infer<typeof ProviderSchema>;
 
+export const NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
+export const NameSchema = z
+	.string()
+	.regex(
+		NAME_PATTERN,
+		"names use letters, digits, '.', '_' and '-' and start with a letter or digit",
+	);
+
 const DocumentSchema = z.union([z.string().min(1), z.record(z.string(), z.unknown())]);
 
 export const NewRunSchema = z.object({
 	scenario: DocumentSchema,
+	name: NameSchema.optional(),
 	seed: z.number().int(),
 	ticks: z.number().int().positive().optional(),
 	provider: ProviderSchema.optional(),
@@ -51,7 +60,7 @@ export type NewRun = z.input<typeof NewRunSchema>;
 
 export const NewAuditSchema = z.object({
 	plan: DocumentSchema,
-	name: z.string().min(1).optional(),
+	name: NameSchema.optional(),
 	replications: z.number().int().positive().optional(),
 	provider: ProviderSchema.optional(),
 });

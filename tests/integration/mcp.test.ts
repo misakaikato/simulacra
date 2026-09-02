@@ -98,25 +98,60 @@ describe("MCP server", () => {
 			provider: "mock",
 		});
 		expect(run.isError).toBe(false);
-		expect(run.text).toContain("run prisoners_dilemma:0 succeeded (tick 3/3, 2 agents)");
-		expect(run.text).toContain("resource: simulacra://runs/prisoners_dilemma:0/result");
+		expect(run.text).toContain("run prisoners_dilemma-s1:0 succeeded (tick 3/3, 2 agents)");
+		expect(run.text).toContain("resource: simulacra://runs/prisoners_dilemma-s1:0/result");
 		expect(run.json).toMatchObject({
-			runId: "prisoners_dilemma:0",
+			runId: "prisoners_dilemma-s1:0",
 			progress: { tick: 3, ticks: 3, status: "succeeded" },
 			result: { status: "succeeded", integrity: { complete: true } },
 		});
 
-		const got = await call(client, "get_run", { runId: "prisoners_dilemma:0" });
+		const got = await call(client, "get_run", { runId: "prisoners_dilemma-s1:0" });
 		expect(got.isError).toBe(false);
 		expect(got.json).toEqual(run.json);
+		const sameSeed = await call(client, "run_scenario", {
+			example: "prisoners_dilemma",
+			seed: 1,
+			ticks: 1,
+			provider: "mock",
+		});
+		expect(sameSeed.isError).toBe(true);
+		expect(sameSeed.json).toMatchObject({
+			error: "run prisoners_dilemma-s1:0 already exists",
+			issues: [{ path: "name" }],
+		});
+		const reseeded = await call(client, "run_scenario", {
+			example: "prisoners_dilemma",
+			seed: 5,
+			ticks: 1,
+			provider: "mock",
+		});
+		expect(reseeded.isError).toBe(false);
+		expect(reseeded.json).toMatchObject({ runId: "prisoners_dilemma-s5:0" });
+		const named = await call(client, "run_scenario", {
+			example: "prisoners_dilemma",
+			name: "pd-named",
+			seed: 5,
+			ticks: 1,
+			provider: "mock",
+		});
+		expect(named.isError).toBe(false);
+		expect(named.json).toMatchObject({ runId: "pd-named:0", result: { seed: 5 } });
+		const badName = await call(client, "run_scenario", {
+			example: "prisoners_dilemma",
+			name: "../x",
+			seed: 6,
+		});
+		expect(badName.isError).toBe(true);
+		expect(badName.text).toContain("name");
 
 		const decisions = await call(client, "query_events", {
-			runId: "prisoners_dilemma:0",
+			runId: "prisoners_dilemma-s1:0",
 			kind: "decision",
 			limit: 3,
 		});
 		expect(decisions.isError).toBe(false);
-		expect(decisions.text).toContain("3 events of run prisoners_dilemma:0");
+		expect(decisions.text).toContain("3 events of run prisoners_dilemma-s1:0");
 		const events = decisions.json as Event[];
 		expect(events).toHaveLength(3);
 		expect(events.every((e) => e.kind === "decision")).toBe(true);
@@ -124,7 +159,7 @@ describe("MCP server", () => {
 		expect(first?.agentId).toBeDefined();
 		if (first?.agentId === undefined) return;
 		const byAgent = await call(client, "query_events", {
-			runId: "prisoners_dilemma:0",
+			runId: "prisoners_dilemma-s1:0",
 			agentId: first.agentId,
 			tick: 1,
 			limit: 1000,
@@ -133,13 +168,13 @@ describe("MCP server", () => {
 			(byAgent.json as Event[]).every((e) => e.agentId === first.agentId && e.t.tick === 1),
 		).toBe(true);
 		const all = await call(client, "query_events", {
-			runId: "prisoners_dilemma:0",
+			runId: "prisoners_dilemma-s1:0",
 			limit: 5000,
 		});
 		expect((all.json as Event[]).length).toBeLessThanOrEqual(1000);
 
 		const trace = await call(client, "get_agent_trace", {
-			runId: "prisoners_dilemma:0",
+			runId: "prisoners_dilemma-s1:0",
 			agentId: first.agentId,
 			tick: 2,
 		});
@@ -151,22 +186,24 @@ describe("MCP server", () => {
 		expect(inspected.tick).toBe(2);
 		expect(inspected.chain.length).toBeGreaterThan(0);
 		const latest = await call(client, "get_agent_trace", {
-			runId: "prisoners_dilemma:0",
+			runId: "prisoners_dilemma-s1:0",
 			agentId: first.agentId,
 		});
 		expect((latest.json as InspectResult).tick).toBe(2);
 
 		const resources = await client.listResources();
 		expect(resources.resources.map((r) => r.uri)).toEqual([
-			"simulacra://runs/prisoners_dilemma:0/result",
+			"simulacra://runs/pd-named:0/result",
+			"simulacra://runs/prisoners_dilemma-s1:0/result",
+			"simulacra://runs/prisoners_dilemma-s5:0/result",
 		]);
 		const resource = await client.readResource({
-			uri: "simulacra://runs/prisoners_dilemma:0/result",
+			uri: "simulacra://runs/prisoners_dilemma-s1:0/result",
 		});
 		const body = resource.contents[0];
 		expect(body?.mimeType).toBe("application/json");
 		expect(JSON.parse(body !== undefined && "text" in body ? body.text : "")).toMatchObject({
-			runId: "prisoners_dilemma:0",
+			runId: "prisoners_dilemma-s1:0",
 			result: { status: "succeeded" },
 		});
 		await expect(
@@ -299,7 +336,7 @@ describe("MCP server", () => {
 				provider: "mock",
 			});
 			expect(run.isError).toBe(false);
-			expect(run.text).toContain("run prisoners_dilemma:0 succeeded");
+			expect(run.text).toContain("run prisoners_dilemma-s2:0 succeeded");
 		} finally {
 			await client.close();
 		}
