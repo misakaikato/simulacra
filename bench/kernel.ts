@@ -8,11 +8,11 @@ import {
 	ok,
 	overrideScenario,
 	runScenario,
-	version,
 	withRunLog,
 	type RunResult,
 	type Scenario,
 } from "../src/index";
+import { RESULTS_FILE, metaLines, writeSection } from "./results";
 
 process.env.NO_PROXY ??= "127.0.0.1,localhost";
 
@@ -29,18 +29,13 @@ interface BenchRow {
 
 const TICKS = 20;
 const FOCAL_AGENTS = 1000;
+const SECTION = "Kernel";
 
 const load = (file: string): Scenario => {
 	const loaded = loadScenario(join(EXAMPLES_DIR, "echo_chamber", file));
 	if (!loaded.ok)
 		throw new Error(loaded.error.map((i) => `${i.path.join(".")} ${i.message}`).join("; "));
 	return loaded.value;
-};
-
-const machine = (): string => {
-	const proc = Bun.spawnSync(["sysctl", "-n", "machdep.cpu.brand_string"]);
-	const text = proc.success ? proc.stdout.toString().trim() : "";
-	return text.length > 0 ? text : `${process.arch} (${process.platform})`;
 };
 
 const bench = async (
@@ -96,14 +91,13 @@ const main = async (): Promise<void> => {
 			await bench("focal 1k mock", focalScenario(), root, { providerOverride: "mock" }),
 			await bench("cohort 100k rule", load("cohort.yaml"), root, {}),
 		];
+		const body = [...metaLines(), "", table(rows)].join("\n");
+		writeSection(RESULTS_FILE, SECTION, body);
 		console.log(`# simulacra kernel bench`);
 		console.log(``);
-		console.log(`- date: ${new Date().toISOString().slice(0, 10)}`);
-		console.log(`- simulacra: ${version}`);
-		console.log(`- bun: ${Bun.version}`);
-		console.log(`- machine: ${machine()}`);
+		console.log(body);
 		console.log(``);
-		console.log(table(rows));
+		console.log(`results: ${RESULTS_FILE}`);
 	} finally {
 		rmSync(root, { recursive: true, force: true });
 	}

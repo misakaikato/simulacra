@@ -6,3 +6,4 @@ bun.lock
 specs/
 decisions/
 .claude/worktrees/
+bench/RESULTS.md
