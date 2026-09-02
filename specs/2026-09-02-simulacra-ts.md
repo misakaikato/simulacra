@@ -930,3 +930,4 @@ simulacra/
 - 禁止：过程叙事（"修复了"、"之前是"）、TODO、注释掉的代码、逐行翻译式注释、与代码不一致的注释。
 - 测试文件不加文件头，只在构造复杂夹具处加简短双语注释。
 - 注释变更单独成提交：`📝 docs(<scope>): bilingual comments for <scope>`。
+- 附录 L 施工裁定：`Executor.batchEvents?` 与 `ObserveContext`（observe 第 7 个可选参数，传 `activationEvent`）定义在 `protocols.ts`；`decision_batch.parseFailures` 与 `Integrity.parseFailures` 同口径；`ids` 为空不写 `observation_batch`，零决策不写 `decision_batch`；批量执行体 `act` 的效果由内核盖 `cause = decision_batch.eventId`；`EventLog.batchesOf(agentId, filter?)` 新增（SQLite 走 `json_each`，内存走 includes）；`inspect` 对 cohort agent 返回 `observationBatch/decisionBatch` 与触及该 agent 的效果。
