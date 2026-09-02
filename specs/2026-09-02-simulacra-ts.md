@@ -889,3 +889,10 @@ simulacra/
 - 契约信封类型（`RunSummary`、`RunProgress`、`AuditSummary`、`AuditProgress`、`RunStatus`、`GraphSnapshot`、`AgentRow`、`MetricSeries`）单一定义在 `src/api/contract.ts`（只含类型与 zod，不引 hono），`src/index.ts` 导出，`gui/src/api.ts` 只 `import type`，不再重复定义；`issues[].path` 为字符串。
 - MCP `get_audit` 入参名为 `auditId`（规格正文 3.16 为笔误）。
 - `serve --port` 限制 0 到 65535。
+
+## 附录 J：C 阶段验收后的裁定
+
+- 提供者 `audit()` 的数值结果每 tick 写成 `measurement` 事件（`instrument: "provider:<name>"`），并以 `provider.<name>.<key>` 进入 `RunResult.metrics`。
+- 检查点之后的边界事件记在 `(tick, 0, 1)`（checkpoint 事件占 seq 0），语义与附录 H 一致。
+- `resume` 跳过检查点之后的 intervene/questionnaire 步骤，属已知局限，README 写明。
+- APS 默认参数面向 N ≥ 5000，小 N 需显式给 `alphaB`/`gamma`。
