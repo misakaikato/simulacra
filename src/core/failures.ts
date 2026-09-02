@@ -9,6 +9,8 @@ export const FAILURE_TYPES = {
 	timeout: "Timeout",
 	network: "NetworkError",
 	malformed: "MalformedResponse",
+	truncated: "truncated",
+	emptyContent: "empty_content",
 	noPrompt: "no_prompt",
 	gatewayMissing: "gateway_missing",
 	parseFailure: "parse_failure",

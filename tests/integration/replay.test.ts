@@ -9,12 +9,19 @@ import {
 	benchScenario,
 	type LlmBenchCase,
 } from "../../bench/llm";
+import { JsonValueSchema } from "../../src/core/schema";
 import { EXAMPLES_DIR, digest, ok, runScenario, withRunLog } from "../../src/index";
 
 const ROOT = join(import.meta.dir, "../..");
 const tempDir = () => mkdtempSync(join(tmpdir(), "simulacra-replay-"));
 
-const RecordedModel = z.object({ request: z.object({ model: z.string() }) });
+// The parts of a recording that decide its key besides the prompt itself
+const RecordedRequest = z.object({
+	request: z.object({
+		model: z.string(),
+		extra: z.record(z.string(), JsonValueSchema).optional(),
+	}),
+});
 
 const recordingsOf = (c: LlmBenchCase): readonly string[] => {
 	const dir = join(EXAMPLES_DIR, c.example, "recordings");
@@ -26,8 +33,8 @@ const recordingsOf = (c: LlmBenchCase): readonly string[] => {
 		: [];
 };
 
-const recordedModel = (file: string): string =>
-	RecordedModel.parse(JSON.parse(readFileSync(file, "utf8"))).request.model;
+const recordedRequest = (file: string) =>
+	RecordedRequest.parse(JSON.parse(readFileSync(file, "utf8"))).request;
 
 describe("replay from the committed recordings", () => {
 	for (const c of LLM_BENCH_CASES) {
@@ -45,9 +52,11 @@ describe("replay from the committed recordings", () => {
 				if (!scenario.ok) return;
 				const first = files[0];
 				if (first === undefined) return;
+				const recorded = recordedRequest(first);
 				const llmOverride = benchLlmOverride(c, scenario.value.llm, {
 					mode: "replay",
-					model: recordedModel(first),
+					model: recorded.model,
+					...(recorded.extra === undefined ? {} : { extra: recorded.extra }),
 				});
 				const replay = async () => {
 					const dir = tempDir();

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdtempSync, readdirSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { hashOf } from "../../src/core/hash";
@@ -583,12 +583,179 @@ describe("presets", () => {
 		expect(ds.model).toBe("deepseek-v4-flash");
 		expect(ds.apiKeyEnv).toBe("SIMULACRA_LLM_API_KEY");
 		expect(ds.sendSeed).toBe(true);
+		expect(ds.extra).toEqual({ thinking: { type: "disabled" } });
 		const mlx = mlxLm("http://127.0.0.1:8080/v1");
 		expect(mlx.sendSeed).toBe(false);
+		expect(mlx.extra).toBeUndefined();
 		expect(mlx.concurrency).toEqual({ initial: 4, max: 8 });
 		const lm = lmStudio("http://127.0.0.1:1234/v1");
 		expect(lm.concurrency).toEqual({ initial: 4, max: 8 });
 		expect(lm.structured).toBe("auto");
 		for (const s of [ds, mlx, lm]) expect(LLMSpecSchema.safeParse(s).success).toBe(true);
+	});
+});
+
+describe("gateway finish_reason and extra", () => {
+	const reply = (
+		message: { content?: string | null; reasoning_content?: string },
+		finish_reason: string,
+		completion_tokens = 20,
+	): Reply => ({
+		status: 200,
+		body: {
+			model: "fake-model",
+			choices: [{ message, finish_reason }],
+			usage: { prompt_tokens: 10, completion_tokens },
+		},
+	});
+
+	test("empty content with finish_reason=length fails as truncated without a retry", async () => {
+		const ep = endpoint(() => reply({ content: "" }, "length", 100));
+		const failures: LLMFailure[] = [];
+		const gw = createGateway(spec(ep.baseUrl), {
+			logger: silentLogger,
+			backoffBaseMs: 1,
+			onFailure: (f) => failures.push(f),
+		});
+		const r = await gw.complete(request("s", "u", { schema: { type: "object" } }));
+		expect(r.ok).toBe(false);
+		if (!r.ok) {
+			expect(r.error.excType).toBe(FAILURE_TYPES.truncated);
+			expect(r.error.retryable).toBe(false);
+			expect(r.error.message).toContain("100 completion tokens");
+		}
+		expect(ep.calls).toBe(1);
+		expect(failures.map((f) => f.excType)).toEqual([FAILURE_TYPES.truncated]);
+		expect(gw.failures()).toBe(1);
+		expect(gw.ledger().llmCalls).toBe(0);
+	});
+
+	test("empty content beside reasoning_content fails as empty_content", async () => {
+		const ep = endpoint(() =>
+			reply({ content: null, reasoning_content: "let me think about this" }, "stop"),
+		);
+		const failures: LLMFailure[] = [];
+		const gw = createGateway(spec(ep.baseUrl), {
+			logger: silentLogger,
+			onFailure: (f) => failures.push(f),
+		});
+		const r = await gw.complete(request("s", "u"));
+		expect(r.ok).toBe(false);
+		if (!r.ok) {
+			expect(r.error.excType).toBe(FAILURE_TYPES.emptyContent);
+			expect(r.error.retryable).toBe(false);
+		}
+		expect(ep.calls).toBe(1);
+		expect(failures.map((f) => f.excType)).toEqual([FAILURE_TYPES.emptyContent]);
+	});
+
+	test("non-empty content keeps finish_reason on the response; blank content without reasoning stays a response", async () => {
+		const cut = endpoint(() => reply({ content: '{"action": "wa' }, "length"));
+		const r = await createGateway(spec(cut.baseUrl), { logger: silentLogger }).complete(
+			request("s", "u", { schema: { type: "object" } }),
+		);
+		expect(r.ok).toBe(true);
+		if (r.ok) {
+			expect(r.value.finishReason).toBe("length");
+			expect(r.value.parsed).toBeUndefined();
+		}
+		const blank = endpoint(() => reply({ content: "  " }, "stop"));
+		const b = await createGateway(spec(blank.baseUrl), { logger: silentLogger }).complete(
+			request("s", "u"),
+		);
+		expect(b.ok).toBe(true);
+		if (b.ok) {
+			expect(b.value.text).toBe("  ");
+			expect(b.value.finishReason).toBe("stop");
+		}
+		const missing = endpoint(() => ({ status: 200, body: completion("ok") }));
+		const m = await createGateway(spec(missing.baseUrl), { logger: silentLogger }).complete(
+			request("s", "u"),
+		);
+		expect(m.ok && m.value.finishReason).toBeUndefined();
+	});
+
+	test("extra is merged into the request body without overriding the gateway's own fields", async () => {
+		const ep = endpoint(() => ({ status: 200, body: completion("ok") }));
+		const gw = createGateway(
+			spec(ep.baseUrl, {
+				extra: {
+					thinking: { type: "disabled" },
+					top_p: 0.5,
+					model: "evil",
+					messages: [],
+					max_tokens: 1,
+					temperature: 9,
+					seed: 99,
+					response_format: "text",
+				},
+			}),
+			{ logger: silentLogger },
+		);
+		const r = await gw.complete(request("s", "u", { seed: 7, schema: { type: "object" } }));
+		expect(r.ok).toBe(true);
+		const body = ep.seen[0]?.body ?? {};
+		expect(body.thinking).toEqual({ type: "disabled" });
+		expect(body.top_p).toBe(0.5);
+		expect(body.model).toBe("test-model");
+		expect(body.max_tokens).toBe(100);
+		expect(body.temperature).toBe(0);
+		expect(body.seed).toBe(7);
+		expect(Array.isArray(body.messages) && body.messages.length).toBe(2);
+		expect(typeof body.response_format === "object" && body.response_format !== null).toBe(
+			true,
+		);
+		const plain = endpoint(() => ({ status: 200, body: completion("ok") }));
+		await createGateway(spec(plain.baseUrl), { logger: silentLogger }).complete(
+			request("s", "u"),
+		);
+		expect("thinking" in (plain.seen[0]?.body ?? {})).toBe(false);
+	});
+
+	test("extra enters the recording key; finish_reason is recorded and replayed", async () => {
+		const ep = endpoint(() => reply({ content: '{"action": "wave"}' }, "stop"));
+		const recordDir = tempDir();
+		const req = request("s", "u", { seed: 7, schema: { type: "object" } });
+		const extra = { thinking: { type: "disabled" } };
+		const plain = createGateway(spec(ep.baseUrl, { mode: "record", recordDir }), {
+			logger: silentLogger,
+		});
+		const disabled = createGateway(spec(ep.baseUrl, { mode: "record", recordDir, extra }), {
+			logger: silentLogger,
+		});
+		expect((await plain.complete(req)).ok).toBe(true);
+		expect((await disabled.complete(req)).ok).toBe(true);
+		expect(readdirSync(recordDir)).toHaveLength(2);
+		expect(ep.calls).toBe(2);
+		const replayer = createGateway(spec(ep.baseUrl, { mode: "replay", recordDir, extra }), {
+			logger: silentLogger,
+		});
+		const replayed = await replayer.complete(req);
+		expect(replayed.ok).toBe(true);
+		if (replayed.ok) {
+			expect(replayed.value.recorded).toBe(true);
+			expect(replayed.value.finishReason).toBe("stop");
+		}
+		const other = createGateway(
+			spec(ep.baseUrl, {
+				mode: "replay",
+				recordDir,
+				extra: { thinking: { type: "enabled" } },
+			}),
+			{ logger: silentLogger },
+		);
+		const miss = await other.complete(req);
+		expect(miss.ok).toBe(false);
+		if (!miss.ok) expect(miss.error.excType).toBe(FAILURE_TYPES.replayMiss);
+		expect(ep.calls).toBe(2);
+		const files = readdirSync(recordDir).map(
+			(f) =>
+				JSON.parse(readFileSync(join(recordDir, f), "utf8")) as {
+					request: { extra?: unknown };
+					response: { finishReason?: string };
+				},
+		);
+		expect(files.map((f) => f.response.finishReason)).toEqual(["stop", "stop"]);
+		expect(files.filter((f) => f.request.extra !== undefined)).toHaveLength(1);
 	});
 });

@@ -6,13 +6,16 @@ import {
 	BASE_URL_ENV,
 	DEFAULT_BASE_URL,
 	DEFAULT_MODEL,
+	FAILURE_TYPES,
 	MODEL_ENV,
+	deepseek,
 	digest,
 	err,
 	loadScenario,
 	ok,
 	overrideScenario,
 	runScenario,
+	withRunLog,
 	type JsonValue,
 	type LLMSpec,
 	type Result,
@@ -23,7 +26,7 @@ import { metaLines, writeSection } from "./results";
 
 export const LLM_SECTION = "LLM";
 export const MAX_TOTAL_CALLS = 150;
-export const MAX_COMPLETION_TOKENS = 200;
+export const MAX_COMPLETION_TOKENS = 512;
 export const CONCURRENCY_INITIAL = 4;
 
 export interface LlmBenchCase {
@@ -51,6 +54,7 @@ export interface BenchEndpoint {
 	readonly apiKeyEnv?: string;
 	readonly baseUrl?: string;
 	readonly model?: string;
+	readonly extra?: LLMSpec["extra"];
 }
 
 export interface LlmBenchOptions {
@@ -74,6 +78,7 @@ export interface LlmBenchRow {
 	readonly complete: boolean;
 	readonly parseFailures: number;
 	readonly llmFailures: number;
+	readonly truncated: number;
 	readonly rejectedActions: number;
 	readonly digest: string;
 }
@@ -119,6 +124,7 @@ export const benchLlmOverride = (
 	...(endpoint.apiKeyEnv === undefined ? {} : { apiKeyEnv: endpoint.apiKeyEnv }),
 	...(endpoint.baseUrl === undefined ? {} : { baseUrl: endpoint.baseUrl }),
 	...(endpoint.model === undefined ? {} : { model: endpoint.model }),
+	...(endpoint.extra === undefined ? {} : { extra: endpoint.extra }),
 });
 
 const clearRecordings = (dir: string | undefined): void => {
@@ -142,6 +148,18 @@ const benchOne = async (
 	const seconds = (performance.now() - started) / 1000;
 	if (!result.ok) return err(`${c.example}: ${result.error.excType}: ${result.error.message}`);
 	const sha = digest(outDir);
+	const truncated = withRunLog(outDir, (log) =>
+		ok(
+			log
+				.query({ kind: ["failure"] })
+				.filter(
+					(e) =>
+						e.kind === "failure" &&
+						e.payload.stage === "llm" &&
+						e.payload.excType === FAILURE_TYPES.truncated,
+				).length,
+		),
+	);
 	const { cost, integrity, status } = result.value;
 	return ok({
 		name: c.example,
@@ -156,6 +174,7 @@ const benchOne = async (
 		complete: integrity.complete,
 		parseFailures: integrity.parseFailures,
 		llmFailures: integrity.llmFailures,
+		truncated: truncated.ok ? truncated.value : -1,
 		rejectedActions: integrity.rejectedActions,
 		digest: sha.ok ? sha.value : "",
 	});
@@ -163,18 +182,27 @@ const benchOne = async (
 
 const table = (rows: readonly LlmBenchRow[]): string =>
 	[
-		"| scenario | agents | ticks | llmCalls | promptTokens | completionTokens | cachedTokens | wall s | status | integrity.complete | parseFailures | llmFailures | rejectedActions | digest |",
-		"| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- | ---: | ---: | ---: | --- |",
+		"| scenario | agents | ticks | llmCalls | promptTokens | completionTokens | cachedTokens | wall s | status | integrity.complete | parseFailures | llmFailures | truncated | rejectedActions | digest |",
+		"| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- | ---: | ---: | ---: | ---: | --- |",
 		...rows.map(
 			(r) =>
-				`| ${r.name} | ${r.agents} | ${r.ticks} | ${r.llmCalls} | ${r.promptTokens} | ${r.completionTokens} | ${r.cachedTokens} | ${r.seconds.toFixed(1)} | ${r.status} | ${r.complete} | ${r.parseFailures} | ${r.llmFailures} | ${r.rejectedActions} | ${r.digest.slice(0, 12)} |`,
+				`| ${r.name} | ${r.agents} | ${r.ticks} | ${r.llmCalls} | ${r.promptTokens} | ${r.completionTokens} | ${r.cachedTokens} | ${r.seconds.toFixed(1)} | ${r.status} | ${r.complete} | ${r.parseFailures} | ${r.llmFailures} | ${r.truncated} | ${r.rejectedActions} | ${r.digest.slice(0, 12)} |`,
 		),
 	].join("\n");
 
 export const runBench = async (opts: LlmBenchOptions): Promise<Result<LlmBenchReport, string>> => {
 	const baseUrl = opts.baseUrl ?? DEFAULT_BASE_URL;
 	const model = opts.model ?? DEFAULT_MODEL;
-	const endpoint: BenchEndpoint = { mode: "record", apiKeyEnv: opts.apiKeyEnv, baseUrl, model };
+	const preset = deepseek();
+	const endpoint: BenchEndpoint = {
+		mode: "record",
+		apiKeyEnv: opts.apiKeyEnv,
+		baseUrl,
+		model,
+		...(baseUrl === preset.baseUrl && preset.extra !== undefined
+			? { extra: preset.extra }
+			: {}),
+	};
 	const out = opts.out ?? join(opts.root, "bench", "RESULTS.md");
 	const runRoot = mkdtempSync(join(tmpdir(), "simulacra-bench-llm-"));
 	try {

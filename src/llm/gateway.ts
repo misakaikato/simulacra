@@ -11,6 +11,7 @@ import type {
 	StructuredMode,
 } from "../core/protocols";
 import { err, ok } from "../core/result";
+import { JsonValueSchema } from "../core/schema";
 import type { Cost, JsonObject, JsonValue, LLMSpec, PromptMessage, Result } from "../core/types";
 import type { Logger } from "../logging/logger";
 import { extractLastJsonBlock, schemaInstruction } from "./structured";
@@ -115,10 +116,30 @@ const UsageSchema = z
 const CompletionSchema = z.object({
 	model: z.string().optional(),
 	choices: z
-		.array(z.object({ message: z.object({ content: z.string().nullable().optional() }) }))
+		.array(
+			z.object({
+				message: z.object({
+					content: z.string().nullable().optional(),
+					reasoning_content: z.string().nullable().optional(),
+				}),
+				finish_reason: z.string().nullable().optional(),
+			}),
+		)
 		.min(1),
 	usage: UsageSchema,
 });
+
+const FINISH_LENGTH = "length";
+
+// Request-body keys the gateway owns; LLMSpec.extra never overrides them
+const RESERVED_BODY_KEYS: ReadonlySet<string> = new Set([
+	"model",
+	"messages",
+	"max_tokens",
+	"temperature",
+	"seed",
+	"response_format",
+]);
 
 const RecordingSchema = z.object({
 	version: z.literal(1),
@@ -130,6 +151,7 @@ const RecordingSchema = z.object({
 		maxTokens: z.number(),
 		seed: z.number().nullable(),
 		structured: z.enum(["auto", "json_schema", "prompt"]),
+		extra: z.record(z.string(), JsonValueSchema).optional(),
 		tags: z.record(z.string(), z.string()),
 		preview: z.string(),
 	}),
@@ -143,6 +165,7 @@ const RecordingSchema = z.object({
 		model: z.string(),
 		latencyMs: z.number(),
 		structured: z.enum(["json_schema", "prompt"]).optional(),
+		finishReason: z.string().optional(),
 	}),
 });
 
@@ -166,6 +189,7 @@ interface Attempted {
 	readonly latencyMs: number;
 	readonly attempts: number;
 	readonly structured?: StructuredMode;
+	readonly finishReason?: string;
 }
 
 const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
@@ -330,6 +354,7 @@ class HttpGateway implements Gateway {
 				temperature: req.temperature,
 				maxTokens,
 				structured: this.spec.structured,
+				...(this.spec.extra === undefined ? {} : { extra: this.spec.extra }),
 			},
 		]);
 
@@ -353,6 +378,9 @@ class HttpGateway implements Gateway {
 						...(recording.response.structured === undefined
 							? {}
 							: { structured: recording.response.structured }),
+						...(recording.response.finishReason === undefined
+							? {}
+							: { finishReason: recording.response.finishReason }),
 					}),
 				),
 				true,
@@ -377,6 +405,9 @@ class HttpGateway implements Gateway {
 					...(attempted.value.structured === undefined
 						? {}
 						: { structured: attempted.value.structured }),
+					...(attempted.value.finishReason === undefined
+						? {}
+						: { finishReason: attempted.value.finishReason }),
 				}),
 			),
 		);
@@ -392,6 +423,7 @@ class HttpGateway implements Gateway {
 			readonly latencyMs: number;
 			readonly recorded: boolean;
 			readonly structured?: StructuredMode;
+			readonly finishReason?: string;
 		},
 	): LLMResponse {
 		const parsed = req.schema === undefined ? undefined : extractLastJsonBlock(body.text);
@@ -405,6 +437,7 @@ class HttpGateway implements Gateway {
 			responseSha: sha256Hex(body.text),
 			recorded: body.recorded,
 			...(body.structured === undefined ? {} : { structured: body.structured }),
+			...(body.finishReason === undefined ? {} : { finishReason: body.finishReason }),
 		};
 	}
 
@@ -427,7 +460,10 @@ class HttpGateway implements Gateway {
 	}
 
 	private buildBody(req: LLMRequest, maxTokens: number, promptMode: boolean): JsonObject {
-		const body: Record<string, JsonValue> = {
+		const body: Record<string, JsonValue> = {};
+		for (const [key, value] of Object.entries(this.spec.extra ?? {}))
+			if (!RESERVED_BODY_KEYS.has(key)) body[key] = value;
+		Object.assign(body, {
 			model: this.spec.model,
 			messages: this.buildMessages(req, promptMode).map((m) => ({
 				role: m.role,
@@ -435,7 +471,7 @@ class HttpGateway implements Gateway {
 			})),
 			temperature: req.temperature,
 			max_tokens: maxTokens,
-		};
+		});
 		if (req.seed !== undefined && this.spec.sendSeed) body.seed = req.seed;
 		if (req.schema !== undefined && !promptMode)
 			body.response_format = {
@@ -523,9 +559,32 @@ class HttpGateway implements Gateway {
 
 				if (outcome.kind === "ok") {
 					const completion = CompletionSchema.safeParse(outcome.body);
-					const content = completion.success
-						? completion.data.choices[0]?.message.content
-						: undefined;
+					const choice = completion.success ? completion.data.choices[0] : undefined;
+					const content = choice?.message.content;
+					const finishReason = choice?.finish_reason ?? undefined;
+					const reasoning = choice?.message.reasoning_content ?? "";
+					const empty = typeof content !== "string" || content.trim().length === 0;
+					const completionTokens = completion.success
+						? (completion.data.usage?.completion_tokens ?? 0)
+						: 0;
+					if (completion.success && empty && finishReason === FINISH_LENGTH)
+						return finalFailure(
+							{
+								excType: FAILURE_TYPES.truncated,
+								message: `empty content with finish_reason=length after ${completionTokens} completion tokens; raise budget.maxCompletionTokens or disable reasoning via llm.extra`,
+								retryable: false,
+							},
+							attempts,
+						);
+					if (completion.success && empty && reasoning.length > 0)
+						return finalFailure(
+							{
+								excType: FAILURE_TYPES.emptyContent,
+								message: `empty content beside ${reasoning.length} characters of reasoning_content; disable reasoning via llm.extra`,
+								retryable: false,
+							},
+							attempts,
+						);
 					if (!completion.success || typeof content !== "string")
 						return finalFailure(
 							{
@@ -551,6 +610,7 @@ class HttpGateway implements Gateway {
 						...(req.schema === undefined
 							? {}
 							: { structured: promptMode ? "prompt" : "json_schema" }),
+						...(finishReason === undefined ? {} : { finishReason }),
 					});
 				}
 
@@ -647,6 +707,7 @@ class HttpGateway implements Gateway {
 				maxTokens,
 				seed: req.seed ?? null,
 				structured: this.spec.structured,
+				...(this.spec.extra === undefined ? {} : { extra: this.spec.extra }),
 				tags: { ...req.tags },
 				preview: preview(req.messages),
 			},
@@ -656,6 +717,9 @@ class HttpGateway implements Gateway {
 				model: attempted.model,
 				latencyMs: attempted.latencyMs,
 				...(attempted.structured === undefined ? {} : { structured: attempted.structured }),
+				...(attempted.finishReason === undefined
+					? {}
+					: { finishReason: attempted.finishReason }),
 			},
 		};
 		const dir = this.spec.recordDir ?? "";
