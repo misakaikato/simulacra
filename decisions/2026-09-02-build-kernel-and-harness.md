@@ -27,3 +27,13 @@
 - 存储驱动定为 bun:sqlite（Bun 不支持 node:sqlite），测试运行器定为 bun test（Vitest 无法在 Bun 运行时可靠跑 bun:sqlite）。
 - npm 名 `simulacra` 已被占用，包名定为 `@misakaikato/simulacra`，bin 仍为 `simulacra`；仓库名 `simulacra`。
 - 规格：`specs/2026-09-02-simulacra-ts.md`。
+
+## 2026-09-03 交付结果
+
+- 仓库公开：https://github.com/misakaikato/simulacra（Apache-2.0，单一作者，无 AI 署名）。
+- 五个阶段全部交付并通过独立验收：A 内核（三段，各打回一轮）、B harness 与适配器（零打回）、C 规模化执行体与降本提供者（零打回）、D API/MCP/GUI（打回一轮）、E 性能脚本与真实模型测试。
+- 门禁：388 个测试全绿、类型检查与 lint 与格式检查通过、GUI 构建通过。
+- 性能：1k focal × 20 tick 5.6 s；100k cohort × 20 tick 25.8 s；DeepSeek 真实模型两示例 38 次调用（预算 150），0 解析失败。
+- 真实模型暴露的缺口与修复：DeepSeek v4-flash 的推理内容占满 max_tokens 使答案为空；加入 `LLMSpec.extra` 透传厂商参数、预设默认关思考、`finish_reason` 记录与 `truncated`/`empty_content` 失败类型。
+- 已知局限（写在 README）：resume 跳过检查点之后的干预与问卷步骤；APS 默认参数面向 N ≥ 5000。
+- 复盘要点：并行施工用 worktree 隔离有效，唯一冲突是 `src/index.ts` 导出列表；每阶段的裁定即时写入规格附录避免了合同漂移；验收分身独立于施工分身，五次验收发现的缺陷全部是真缺陷（溢出回绕、失败被吞、分层违反、SSE 断流）。
