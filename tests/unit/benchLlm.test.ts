@@ -141,7 +141,7 @@ describe("bench/llm", () => {
 			expect(echo?.cachedTokens).toBeGreaterThan(0);
 			expect(totalCalls).toBe(ep.calls);
 			expect(totalCalls).toBeLessThanOrEqual(MAX_TOTAL_CALLS);
-			expect(ep.sawThinking).toBe(false);
+			expect(ep.sawThinking).toBe(true);
 			expect([...ep.maxTokens]).toEqual([MAX_COMPLETION_TOKENS]);
 			const md = readFileSync(out, "utf8");
 			expect(md).toContain("## LLM");
