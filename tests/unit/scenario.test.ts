@@ -3,6 +3,7 @@ import {
 	overrideScenario,
 	parseScenario,
 	parseScenarioYaml,
+	resolveScenarioPaths,
 	scenarioHash,
 	spawnReplications,
 } from "../../src/core/scenario";
@@ -188,5 +189,29 @@ describe("scenario functions", () => {
 		const invalid = overrideScenario(s, "population.n", "many");
 		expect(invalid.ok).toBe(false);
 		if (!invalid.ok) expect(invalid.error.kind).toBe("InvalidOverride");
+	});
+});
+
+describe("resolveScenarioPaths", () => {
+	test("resolves plugins and llm.recordDir against the scenario directory", () => {
+		const s = load();
+		const relative: Scenario = {
+			...s,
+			plugins: ["./rules.ts"],
+			llm: { ...s.llm, recordDir: "./recordings" },
+		};
+		const resolved = resolveScenarioPaths(relative, "/base/dir");
+		expect(resolved.plugins).toEqual(["/base/dir/rules.ts"]);
+		expect(resolved.llm.recordDir).toBe("/base/dir/recordings");
+		expect(resolved.llm.mode).toBe(relative.llm.mode);
+		expect(resolveScenarioPaths(resolved, "/elsewhere")).toEqual(resolved);
+	});
+
+	test("leaves absent and absolute paths alone", () => {
+		const s = load();
+		expect(s.llm.recordDir).toBeUndefined();
+		expect(resolveScenarioPaths(s, "/base")).toEqual(s);
+		const absolute: Scenario = { ...s, llm: { ...s.llm, recordDir: "/abs/recordings" } };
+		expect(resolveScenarioPaths(absolute, "/base").llm.recordDir).toBe("/abs/recordings");
 	});
 });

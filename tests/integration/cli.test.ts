@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { existsSync, mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { CHECKPOINTS_DIR } from "../../src/core/runDir";
+import { CHECKPOINTS_DIR, readRunScenario } from "../../src/core/runDir";
 import { eventLogPath, openSqliteEventLog } from "../../src/core/log";
 import { doctor } from "../../src/index";
 
@@ -316,4 +316,29 @@ describe("doctor", () => {
 			server.stop(true);
 		}
 	}, 20000);
+});
+
+describe("run --llm-mode", () => {
+	test("maps to llm.mode and the example's recordDir resolves next to the scenario", () => {
+		const out = tempDir();
+		const args = [PD, "--seed", "1", "--provider", "mock"];
+		const r = cli(["run", ...args, "--llm-mode", "replay", "--out", out]);
+		expect(r.stderr).toBe("");
+		expect(r.code).toBe(0);
+		const written = readRunScenario(out);
+		expect(written.ok).toBe(true);
+		if (!written.ok) return;
+		expect(written.value.llm.mode).toBe("replay");
+		expect(written.value.llm.recordDir).toBe(
+			join(ROOT, "examples/prisoners_dilemma/recordings"),
+		);
+		const live = tempDir();
+		expect(cli(["run", ...args, "--out", live]).code).toBe(0);
+		const untouched = readRunScenario(live);
+		expect(untouched.ok && untouched.value.llm.mode).toBe("live");
+		expect(cli(["digest", live]).stdout).toBe(cli(["digest", out]).stdout);
+		const bad = cli(["run", ...args, "--llm-mode", "bogus", "--out", tempDir()]);
+		expect(bad.code).toBe(1);
+		expect(bad.stderr).toContain("llm-mode");
+	});
 });

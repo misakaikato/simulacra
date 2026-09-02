@@ -21,7 +21,7 @@ import {
 import { err, ok } from "./core/result";
 import { digestRun, readRunScenario, runDirOfCheckpoint } from "./core/runDir";
 export { openRunLog, withRunLog } from "./core/runDir";
-import { parseScenarioYaml, resolveScenarioPlugins, type ScenarioIssue } from "./core/scenario";
+import { parseScenarioYaml, resolveScenarioPaths, type ScenarioIssue } from "./core/scenario";
 import type { GatewayFactory } from "./core/simulation";
 import type { AuditPlan, FailureInfo, Result, RunResult, Scenario } from "./core/types";
 import { parseAuditPlanYaml } from "./harness/plan";
@@ -93,6 +93,7 @@ export type {
 	InstrumentSpec,
 	JsonObject,
 	JsonValue,
+	LLMSpec,
 	LogicalTime,
 	ModuleSpec,
 	PluginSpec,
@@ -147,6 +148,7 @@ export {
 	overrideScenario,
 	parseScenario,
 	parseScenarioYaml,
+	resolveScenarioPaths,
 	resolveScenarioPlugins,
 	scenarioHash,
 	spawnReplications,
@@ -392,7 +394,7 @@ export const loadScenario = (pathOrText: string): Result<Scenario, readonly Scen
 	const parsed = parseScenarioYaml(isFile ? readFileSync(pathOrText, "utf8") : pathOrText);
 	if (!parsed.ok) return parsed;
 	return ok(
-		resolveScenarioPlugins(parsed.value, isFile ? dirname(resolve(pathOrText)) : process.cwd()),
+		resolveScenarioPaths(parsed.value, isFile ? dirname(resolve(pathOrText)) : process.cwd()),
 	);
 };
 

@@ -31,6 +31,7 @@ import type {
 	EventId,
 	FailureInfo,
 	JsonValue,
+	LLMSpec,
 	ProviderSpec,
 	Result,
 	RunResult,
@@ -53,9 +54,15 @@ export interface RunOptions {
 	readonly baseDir?: string;
 	readonly checkpointEvery?: number;
 	readonly onEvent?: EventHandler;
+	readonly llmOverride?: Partial<LLMSpec>;
 }
 
-export type ResumeOptions = Omit<RunOptions, "ticksOverride" | "providerOverride">;
+export type ResumeOptions = Omit<RunOptions, "ticksOverride" | "providerOverride" | "llmOverride">;
+
+export const withLlmOverride = (scenario: Scenario, override: Partial<LLMSpec>): Scenario => ({
+	...scenario,
+	llm: { ...scenario.llm, ...override },
+});
 
 export const withProviderOverride = (scenario: Scenario, kind: string): Scenario => {
 	const providers: Record<string, ProviderSpec> = {};
@@ -316,6 +323,7 @@ export const runScenario = async (
 		effective = withProviderOverride(effective, opts.providerOverride);
 	if (opts.ticksOverride !== undefined)
 		effective = withTicksOverride(effective, opts.ticksOverride);
+	if (opts.llmOverride !== undefined) effective = withLlmOverride(effective, opts.llmOverride);
 	return drive({ scenario: effective, steps: effective.steps }, registry, outDir, opts);
 };
 
