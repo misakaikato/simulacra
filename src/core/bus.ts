@@ -1,5 +1,5 @@
 import type { EventLog } from "./protocols";
-import type { Event, EventFilter, EventId } from "./types";
+import type { BatchEventFilter, EntityId, Event, EventFilter, EventId } from "./types";
 
 export type EventHandler = (e: Event) => void;
 
@@ -13,6 +13,8 @@ export const observableLog = (log: EventLog, emit: EventHandler): EventLog => ({
 	putContent: (text: string): string => log.putContent(text),
 	getContent: (sha: string): string | undefined => log.getContent(sha),
 	query: (filter: EventFilter): readonly Event[] => log.query(filter),
+	batchesOf: (agentId: EntityId, filter?: BatchEventFilter): readonly Event[] =>
+		log.batchesOf(agentId, filter),
 	sql: <T>(sql: string, params?: readonly (string | number)[]): readonly T[] =>
 		log.sql<T>(sql, params),
 	chain: (eventId: EventId): readonly Event[] => log.chain(eventId),

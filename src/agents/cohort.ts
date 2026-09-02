@@ -7,6 +7,7 @@ import type {
 	Executor,
 	GraphView,
 	ModuleObservations,
+	ObserveContext,
 	PluginContext,
 	PluginError,
 	ReadonlyColumn,
@@ -48,6 +49,9 @@ export const CohortOptionsSchema = z.object({
 	virtualActions: z.array(z.string().min(1)).min(1),
 	fallbackAction: z.string().min(1).optional(),
 	where: WhereSchema.optional(),
+	// Store the per-tick feature matrix in the content store and reference it from the
+	// observation_batch event; off by default to keep observation free of content writes.
+	recordFeatures: z.boolean().default(false),
 });
 
 export type CohortOptions = z.output<typeof CohortOptionsSchema>;
@@ -90,12 +94,14 @@ const graphOf = (modules: ReadonlyMap<string, { graph?(): GraphView }>): GraphVi
 };
 
 // A columnar executor: observation is a feature matrix computed straight from world columns,
-// decisions are handed in bulk to a Transition that writes setColumn effects.
+// decisions are handed in bulk to a Transition that writes setColumn effects. Events are
+// batched per tick: one observation_batch here, one decision_batch from the kernel.
 class CohortExecutor implements Executor {
 	readonly name: string;
 	readonly entity: string;
 	readonly provider: string;
 	readonly resolvesOwnActions = true;
+	readonly batchEvents = true;
 	readonly fallbackAction: string;
 	private readonly options: CohortOptions;
 	private readonly transition: Transition;
@@ -147,6 +153,7 @@ class CohortExecutor implements Executor {
 		log: EventLog,
 		rng: Rng,
 		observations?: ModuleObservations,
+		ctx?: ObserveContext,
 	): Promise<readonly DecisionRequest[]> {
 		if (ids.length === 0) return [];
 		const columns = this.options.features.map((name) => {
@@ -159,6 +166,8 @@ class CohortExecutor implements Executor {
 				: world.column<Scalar>(this.entity, this.options.neighborMean);
 		const neighbourStats =
 			neighbourColumn === undefined ? undefined : columnStats(neighbourColumn);
+		const eventId = newEventId(rng);
+		const matrix: (readonly number[])[] = [];
 		const requests: DecisionRequest[] = [];
 		for (const agentId of ids) {
 			const features = columns.map(({ column, stats }) =>
@@ -178,28 +187,40 @@ class CohortExecutor implements Executor {
 				neighborMean = count === 0 ? numberOf(neighbourColumn.get(agentId)) : sum / count;
 				features.push(zScore(neighborMean, neighbourStats));
 			}
-			const observation: JsonObject = { features, neighborMean };
-			const contentSha = log.putContent(JSON.stringify(observation));
-			const eventId = newEventId(rng);
-			log.append(
-				makeEvent(
-					{ eventId, runId: this.runId, t, seedPath: rng.path, agentId },
-					{
-						kind: "observation",
-						payload: { contentSha, refs: [], truncated: false },
-					},
-				),
-			);
+			if (this.options.recordFeatures) matrix.push(features);
 			requests.push({
 				agentId,
 				t,
 				state: this.stateOf(world, agentId),
-				observation,
+				observation: { features, neighborMean },
 				observationEvent: eventId,
 				features,
 				actionSpace: this.options.virtualActions,
 			});
 		}
+		const featuresSha = this.options.recordFeatures
+			? log.putContent(JSON.stringify(matrix))
+			: undefined;
+		log.append(
+			makeEvent(
+				{
+					eventId,
+					runId: this.runId,
+					t,
+					seedPath: rng.path,
+					...(ctx === undefined ? {} : { parent: ctx.activationEvent }),
+				},
+				{
+					kind: "observation_batch",
+					payload: {
+						executor: this.name,
+						agentIds: ids,
+						count: ids.length,
+						...(featuresSha === undefined ? {} : { featuresSha }),
+					},
+				},
+			),
+		);
 		this.logger.trace("cohort observed", { agents: ids.length, features: columns.length });
 		return requests;
 	}

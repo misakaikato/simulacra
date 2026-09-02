@@ -64,8 +64,14 @@ interface AgentCount {
 	readonly n: number;
 }
 
-const AGENT_COUNTS_SQL =
-	"SELECT agent_id, kind, COUNT(*) AS n FROM events WHERE agent_id IS NOT NULL AND kind IN ('decision', 'failure') GROUP BY agent_id, kind";
+// Per-agent decision and failure events, plus one decision per appearance in a decision_batch
+const AGENT_COUNTS_SQL = `
+SELECT agent_id, kind, COUNT(*) AS n FROM events
+WHERE agent_id IS NOT NULL AND kind IN ('decision', 'failure') GROUP BY agent_id, kind
+UNION ALL
+SELECT members.value AS agent_id, 'decision' AS kind, COUNT(*) AS n
+FROM events, json_each(events.payload, '$.agentIds') AS members
+WHERE kind = 'decision_batch' GROUP BY members.value`;
 
 const scenarioOf = (
 	raw: string | Record<string, unknown>,
@@ -203,8 +209,10 @@ export const runRoutes = (deps: ApiDeps): Hono => {
 		if (!counts.ok) return notFound(c, counts.error);
 		const decisions = new Map<string, number>();
 		const failures = new Map<string, number>();
-		for (const row of counts.value)
-			(row.kind === "decision" ? decisions : failures).set(row.agent_id, row.n);
+		for (const row of counts.value) {
+			const target = row.kind === "decision" ? decisions : failures;
+			target.set(row.agent_id, (target.get(row.agent_id) ?? 0) + row.n);
+		}
 		const hidden = hiddenPersonaColumns(scenario.value);
 		const world = replayed.value.world;
 		const rows: AgentRow[] = world.ids(AGENT_ENTITY).map((id) => {

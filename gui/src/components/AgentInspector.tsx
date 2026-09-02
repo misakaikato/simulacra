@@ -36,6 +36,10 @@ const summary = (e: SimEvent): string => {
 			return `${e.payload.action}${e.payload.parseOk ? "" : " (fallback)"}`;
 		case "observation":
 			return `prompt ${short(e.payload.contentSha, 8)}${e.payload.truncated ? ", truncated" : ""}`;
+		case "observation_batch":
+			return `${e.payload.executor}, ${e.payload.count} agents`;
+		case "decision_batch":
+			return `${e.payload.executor}, ${e.payload.agentIds.length} agents via ${e.payload.provider}${e.payload.parseFailures > 0 ? `, ${e.payload.parseFailures} parse failures` : ""}`;
 		case "failure":
 			return `${e.payload.excType}: ${e.payload.message}`;
 		case "llm_call":

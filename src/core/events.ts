@@ -1,10 +1,12 @@
 import { canonicalJson } from "./hash";
 import { compareTime } from "./time";
 import type {
+	BatchEventKind,
 	EntityId,
 	Event,
 	EventId,
 	EventKind,
+	EventOf,
 	EventPayload,
 	LogicalTime,
 	Provenance,
@@ -15,6 +17,8 @@ export const EVENT_KINDS: readonly EventKind[] = [
 	"activation",
 	"observation",
 	"decision",
+	"observation_batch",
+	"decision_batch",
 	"llm_call",
 	"effect",
 	"intervention",
@@ -24,8 +28,13 @@ export const EVENT_KINDS: readonly EventKind[] = [
 	"module_step",
 ];
 
+export const BATCH_EVENT_KINDS: readonly BatchEventKind[] = ["observation_batch", "decision_batch"];
+
 export const isEventKind = (s: string): s is EventKind =>
 	(EVENT_KINDS as readonly string[]).includes(s);
+
+export const isBatchEvent = (e: Event): e is EventOf<BatchEventKind> =>
+	e.kind === "observation_batch" || e.kind === "decision_batch";
 
 export interface EventFields {
 	readonly eventId: EventId;
