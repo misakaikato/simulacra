@@ -314,8 +314,9 @@ export {
 	registerBuiltinAdapters,
 } from "./adapters";
 export * as stats from "./harness/stats";
-export type { AppOptions } from "./api/app";
-export { GUI_DIST_DIR, createApp } from "./api/app";
+export type { AppOptions, ListenOptions } from "./api/app";
+export { GUI_DIST_DIR, createApp, listen } from "./api/app";
+export { KEEPALIVE_MS } from "./api/sse";
 export type { McpServerOptions } from "./mcp/server";
 export { AUDIT_REPORT_TEMPLATE, RUN_RESULT_TEMPLATE, createMcpServer } from "./mcp/server";
 export type {

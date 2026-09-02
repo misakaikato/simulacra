@@ -2,6 +2,8 @@ import type { Context } from "hono";
 import { streamSSE, type SSEStreamingApi } from "hono/streaming";
 import { openRunLog, type Event, type RunId, type RunMessage, type RunRegistry } from "../index";
 
+export const KEEPALIVE_MS = 15000;
+const KEEPALIVE_FRAME = ": keepalive\n\n";
 const DONE_EVENT = "done";
 const RUN_EVENT = "event";
 
@@ -30,7 +32,12 @@ const replayFinished = async (
 	await writeDone(stream, runId, registry.getRun(runId)?.progress.status ?? "failed");
 };
 
-export const streamRun = (c: Context, registry: RunRegistry, runId: RunId): Response =>
+export const streamRun = (
+	c: Context,
+	registry: RunRegistry,
+	runId: RunId,
+	keepaliveMs = KEEPALIVE_MS,
+): Response =>
 	streamSSE(c, async (stream) => {
 		const queue: RunMessage[] = [];
 		let wake: (() => void) | undefined;
@@ -48,6 +55,9 @@ export const streamRun = (c: Context, registry: RunRegistry, runId: RunId): Resp
 			return;
 		}
 		stream.onAbort(notify);
+		const keepalive = setInterval(() => {
+			if (!stream.aborted && !stream.closed) void stream.write(KEEPALIVE_FRAME);
+		}, keepaliveMs);
 		try {
 			for (;;) {
 				if (stream.aborted) return;
@@ -65,6 +75,7 @@ export const streamRun = (c: Context, registry: RunRegistry, runId: RunId): Resp
 				}
 			}
 		} finally {
+			clearInterval(keepalive);
 			unsubscribe();
 		}
 	});
