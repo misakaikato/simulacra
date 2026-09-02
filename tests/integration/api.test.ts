@@ -3,14 +3,6 @@ import { existsSync, mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Hono } from "hono";
-import type {
-	AgentRow,
-	AuditSummary,
-	Example,
-	GraphSnapshot,
-	MetricSeries,
-	RunSummary,
-} from "../../gui/src/api";
 import {
 	GUI_DIST_DIR,
 	createApp,
@@ -18,9 +10,15 @@ import {
 	loadAuditPlan,
 	parseScenario,
 	silentLogger,
+	type AgentRow,
+	type AuditSummary,
 	type Event,
+	type Example,
+	type GraphSnapshot,
 	type JsonObject,
+	type MetricSeries,
 	type RunRegistry,
+	type RunSummary,
 	type Scenario,
 } from "../../src/index";
 import { SLOW_KIND } from "../fixtures/slow_plugin";

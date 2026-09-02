@@ -319,15 +319,30 @@ export { GUI_DIST_DIR, createApp } from "./api/app";
 export type { McpServerOptions } from "./mcp/server";
 export { AUDIT_REPORT_TEMPLATE, RUN_RESULT_TEMPLATE, createMcpServer } from "./mcp/server";
 export type {
-	AuditMessage,
+	AgentRow,
+	ApiErrorBody,
+	ApiIssue,
+	ApiIssuesBody,
 	AuditProgress,
 	AuditSummary,
-	RunMessage,
+	Example,
+	GraphEdge,
+	GraphSnapshot,
+	MetricPoint,
+	MetricSeries,
+	NewAudit,
+	NewRun,
+	ProviderChoice,
 	RunProgress,
-	RunRegistry,
-	RunRegistryOptions,
 	RunStatus,
 	RunSummary,
+} from "./api/contract";
+export { NewAuditSchema, NewRunSchema, ProviderSchema } from "./api/contract";
+export type {
+	AuditMessage,
+	RunMessage,
+	RunRegistry,
+	RunRegistryOptions,
 	StartAuditError,
 	StartAuditInput,
 	StartRunError,

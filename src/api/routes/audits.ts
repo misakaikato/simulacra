@@ -1,19 +1,19 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { Hono } from "hono";
-import { z } from "zod";
 import {
+	NewAuditSchema,
 	REPORT_FILE,
 	loadScenario,
 	ok,
 	parseAuditPlan,
 	parseAuditPlanYaml,
+	type ApiIssue,
 	type AuditPlan,
 	type Result,
 	type StartAuditError,
 } from "../../index";
 import {
-	ProviderSchema,
 	badRequest,
 	conflict,
 	exampleDirOf,
@@ -21,15 +21,7 @@ import {
 	notFound,
 	readJsonBody,
 	type ApiDeps,
-	type ApiIssue,
 } from "./shared";
-
-const NewAuditSchema = z.object({
-	plan: z.union([z.string().min(1), z.record(z.string(), z.unknown())]),
-	name: z.string().min(1).optional(),
-	replications: z.number().int().positive().optional(),
-	provider: ProviderSchema.optional(),
-});
 
 const planOf = (raw: string | Record<string, unknown>): Result<AuditPlan, readonly ApiIssue[]> => {
 	const parsed =
