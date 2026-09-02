@@ -880,3 +880,12 @@ simulacra/
 - 热配置：`ctx.scenario` 为活引用；intervene 逐键覆盖 `params.*`、`prompt.*`、`policy.options.*`，其它键记 `override_not_hot` 并回退；策略每次重建，`$param` 驱动的执行体 options 变化时重建执行体并转移状态。已知局限：`resume` 跳过检查点之后的 intervene/questionnaire 步骤。
 - 注册表新增 `transitions` 与 `instruments` 槽；`bench/kernel.ts` 输出目录用系统临时目录并清理；`tsconfig.json` include 加 `bench`。
 - mock 提供者对注册表外的虚拟动作返回无参决策。
+
+## 附录 I：D 阶段验收后的裁定
+
+- `serve` 的 `Bun.serve` 设 `idleTimeout: 0`，SSE 另每 15 秒写一行注释心跳；补一条经真实 `Bun.serve` 的慢 tick SSE 测试。
+- 注册表读取 `result.json`、`plan.json` 失败时返回带路径与原因的 `err` 并 error 日志，不得吞成 undefined；MCP 资源变量解码失败同样记录。
+- `POST /api/runs` 接受可选 `name`；未给时 API 侧把 `scenarioId` 改写为 `<scenarioId>-s<seed>`，只有同名（同 scenarioId 与 seed）才 409。MCP `run_scenario` 同理。
+- 契约信封类型（`RunSummary`、`RunProgress`、`AuditSummary`、`AuditProgress`、`RunStatus`、`GraphSnapshot`、`AgentRow`、`MetricSeries`）单一定义在 `src/api/contract.ts`（只含类型与 zod，不引 hono），`src/index.ts` 导出，`gui/src/api.ts` 只 `import type`，不再重复定义；`issues[].path` 为字符串。
+- MCP `get_audit` 入参名为 `auditId`（规格正文 3.16 为笔误）。
+- `serve --port` 限制 0 到 65535。
