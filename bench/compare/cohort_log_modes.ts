@@ -7,7 +7,7 @@ import { createSimulation } from "../../src/core/simulation";
 import { createMemoryEventLog } from "../../src/core/log";
 import { silentLogger } from "../../src/logging/logger";
 
-const loaded = loadScenario("../../examples/echo_chamber/cohort.yaml");
+const loaded = loadScenario(join(import.meta.dir, "../../examples/echo_chamber/cohort.yaml"));
 if (!loaded.ok) throw new Error(JSON.stringify(loaded.error));
 for (const mode of ["memory", "sqlite"] as const) {
 	const outDir = mkdtempSync(join(tmpdir(), "sim-iso-"));

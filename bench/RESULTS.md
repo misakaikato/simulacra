@@ -2,15 +2,15 @@
 
 ## Kernel
 
-- date: 2026-09-02
+- date: 2026-09-03
 - simulacra: 0.1.0
 - bun: 1.3.11
 - machine: Apple M5 Max
 
 | run | agents | ticks | seconds | events | status | integrity.complete | digest |
 | --- | ---: | ---: | ---: | ---: | --- | --- | --- |
-| focal 1k mock | 1000 | 20 | 5.6 | 12415 | succeeded | true | 797393ff8fcc |
-| cohort 100k rule | 100000 | 20 | 25.8 | 2001060 | succeeded | true | 19952d4c7596 |
+| focal 1k mock | 1000 | 20 | 6.0 | 12415 | succeeded | true | 797393ff8fcc |
+| cohort 100k rule | 100000 | 20 | 7.4 | 126 | succeeded | true | dfe2a9ccfe96 |
 
 ## LLM
 
@@ -35,8 +35,8 @@ Same machine (Apple M5 Max), same micro-model: 100,000 agents on a random graph 
 | system | what it keeps per agent-tick | 100k agents, 20 ticks |
 | --- | --- | ---: |
 | Mesa 3.5.1 (CPython 3.12) | nothing, in-memory state only | 1.38 s |
-| simulacra cohort, in-memory event log | one observation and one decision event per agent-tick | 9.6 s |
-| simulacra cohort, SQLite event log (default) | the same 2,001,059 events persisted | 27.8 s |
+| simulacra cohort, in-memory event log | one entry in the tick's observation_batch and decision_batch events | 5.8 s |
+| simulacra cohort, SQLite event log (default) | the same 125 events persisted | 7.2 s |
 
 Reproduce with `uv run --with mesa --with networkx --with numpy --with pandas python bench/compare/mesa_echo.py` and `bun bench/compare/cohort_log_modes.ts`.
 
