@@ -48,6 +48,20 @@ With a real model, set `SIMULACRA_LLM_API_KEY` and drop `--provider mock`. Any O
 
 Both examples ship with recordings made against `deepseek-v4-flash`. Pass `--llm-mode replay` to run them offline against those recordings, or `--llm-mode record` to make your own.
 
+## Screenshots
+
+Run view: tick timeline with failure counts, force-directed network colored by stance, agent inspector with the causal chain from observation to effects, metric series, integrity and cost.
+
+<p align="center"><img src="docs/screenshots/run.jpg" alt="Run view" width="100%"></p>
+
+Audit view: plan and evidence grade, perturbation axes, conditions, pairwise tests with Holm-corrected p values, sensitivity ranking, direction consistency.
+
+<p align="center"><img src="docs/screenshots/audit.jpg" alt="Audit view" width="100%"></p>
+
+Runs list with a new-run form, and the offline HTML audit report.
+
+<p align="center"><img src="docs/screenshots/runs.jpg" alt="Runs list" width="49%"> <img src="docs/screenshots/report.jpg" alt="HTML audit report" width="49%"></p>
+
 ## What a run produces
 
 ```
@@ -181,6 +195,19 @@ bun run format:check   # prettier
 bun test               # bun test
 bun run build:gui      # vite build to gui/dist
 ```
+
+Commit messages follow one fixed form, `<emoji> <type>(<scope>): <summary>`, in English and imperative mood, one emoji per type:
+
+| type     | emoji | used for                             |
+| -------- | ----- | ------------------------------------ |
+| feat     | ✨    | new capability                       |
+| fix      | 🐛    | defect fix                           |
+| refactor | ♻️    | structure without behavior change    |
+| perf     | ⚡    | benchmarks and performance work      |
+| test     | 🧪    | tests only                           |
+| docs     | 📝    | README, specs, decisions             |
+| chore    | 🔧    | tooling, dependencies, configuration |
+| merge    | 🔀    | merge commits                        |
 
 Specifications live in `specs/` and decisions in `decisions/`; both are the source of truth for behavior the code alone does not explain.
 
