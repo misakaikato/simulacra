@@ -1,0 +1,36 @@
+{
+	"version": 1,
+	"key": "6dffad64e38e982c626e9a31ed77666d10a0d2581b8ecdaf581cda9d1a2e5a5c",
+	"request": {
+		"promptHash": "bab692b4eeb34fe54df39c8f97e601ac12c80dafff5ab2bc261b810d7fc7487f",
+		"model": "deepseek-v4-flash",
+		"temperature": 0,
+		"maxTokens": 512,
+		"seed": 1,
+		"structured": "auto",
+		"extra": {
+			"thinking": {
+				"type": "disabled"
+			}
+		},
+		"tags": {
+			"purpose": "decision",
+			"eventId": "2KTX37M6M7KGGJYS9M2MWW4NHP",
+			"agentId": "1NF6K8D45RBSMFFG8D15D5ENMH",
+			"tick": "1"
+		},
+		"preview": "You are playing a repeated prisoner's dilemma against the same opponent for ten rounds. Each round both of you choose to cooperate or defect. Payoffs per round: both cooperate 3 and 3; you cooperate a"
+	},
+	"response": {
+		"text": "{\"action\":\"cooperate\",\"args\":{},\"rationale\":\"Continue mutual cooperation to maximize long-term payoff.\"}",
+		"usage": {
+			"promptTokens": 399,
+			"completionTokens": 24,
+			"cachedTokens": 0
+		},
+		"model": "deepseek-v4-flash",
+		"latencyMs": 588.260125,
+		"structured": "prompt",
+		"finishReason": "stop"
+	}
+}

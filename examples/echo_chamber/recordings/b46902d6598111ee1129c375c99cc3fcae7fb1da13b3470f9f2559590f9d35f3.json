@@ -1,0 +1,36 @@
+{
+	"version": 1,
+	"key": "b46902d6598111ee1129c375c99cc3fcae7fb1da13b3470f9f2559590f9d35f3",
+	"request": {
+		"promptHash": "c236c54357022f8c8221d4e4a647a12ed334ee3bbb5e7cabb70e3418d603ad86",
+		"model": "deepseek-v4-flash",
+		"temperature": 0,
+		"maxTokens": 512,
+		"seed": 7,
+		"structured": "auto",
+		"extra": {
+			"thinking": {
+				"type": "disabled"
+			}
+		},
+		"tags": {
+			"purpose": "decision",
+			"eventId": "5CSA6T9RQZ2ANGRP1TPVM7W76Z",
+			"agentId": "7TTG5ZHM3100T9XJHCSDZ1TDHV",
+			"tick": "0"
+		},
+		"preview": "You use a small social network where people discuss one contested issue. Your stance runs from -2 (strongly against) to 2 (strongly in favour). Each round you see a few posts from your feed; you may p"
+	},
+	"response": {
+		"text": "{\"action\":\"follow\",\"args\":{\"target\":\"7TTG5ZHM3100T9XJHCSDZ1TDJ1\"},\"rationale\":\"Following a neighbor to start receiving posts and engage with the network.\"}",
+		"usage": {
+			"promptTokens": 700,
+			"completionTokens": 47,
+			"cachedTokens": 0
+		},
+		"model": "deepseek-v4-flash",
+		"latencyMs": 700.472417,
+		"structured": "prompt",
+		"finishReason": "stop"
+	}
+}
