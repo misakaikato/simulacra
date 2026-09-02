@@ -93,20 +93,117 @@ bun run simulacra resume runs/echo/checkpoints/5 --ticks 5 --out runs/echo-resum
 
 ## Architecture
 
-```
-tools     cli/  api/  mcp/  gui/          entry points, only over the public API
-harness   harness/                        axes × replications → runs → statistics → report
-interop   adapters/                       script contract, OASIS import
-plugins   agents/ providers/ modules/ policies/ metrics/ instruments/
-core      core/                           clock, world, resolver, actions, events, log, checkpoint, scenario, simulation
-infra     logging/
+```mermaid
+flowchart TB
+    subgraph tools["Entry points, only over the public API"]
+        CLI["CLI<br/>run · audit · replay · inspect · serve · mcp"]
+        API["HTTP API<br/>Hono routes · SSE"]
+        MCP["MCP server<br/>stdio tools · resources"]
+        GUI["GUI<br/>Vite · React"]
+    end
+    subgraph pub["src/index.ts"]
+        PUB["public API<br/>loadScenario · runScenario · audit · inspect · registry"]
+    end
+    subgraph harness["harness/"]
+        AX["perturbation axes<br/>TRAILS catalog"] --> CO["conditions × replications"] --> ST["statistics<br/>MWU · Holm · d · TVD · W1"] --> RP["report.html"]
+    end
+    subgraph plugins["plugins, registered by name"]
+        AG["agents/<br/>focal · cohort"]
+        PR["providers/<br/>llm · rule · mock · surrogate · archetype · cache · topo · aps"]
+        MO["modules/<br/>socialGraph · feed · calendar"]
+        PO["policies/ metrics/ instruments/"]
+        AD["adapters/<br/>script · OASIS import"]
+    end
+    subgraph core["core/"]
+        SC["scenario<br/>seed lineage"] --> SIM["simulation<br/>tick loop"]
+        SIM --> WR["world + resolver<br/>columnar state, single writer"]
+        SIM --> LOG["event log<br/>SQLite, content store"]
+        SIM --> CK["checkpoint · replay"]
+    end
+    subgraph llm["llm/"]
+        GW["gateway<br/>AIMD · retry · record/replay · budget · circuit"]
+    end
+    GUI --> API
+    CLI --> PUB
+    API --> PUB
+    MCP --> PUB
+    PUB --> harness
+    PUB --> core
+    harness --> core
+    plugins --> core
+    PR --> GW
+    AD --> core
 ```
 
 Dependencies point downward. The core imports nothing above it, and a test guards the rule. Everything above the core is a plugin registered by name: a new action, module, provider, activation policy, metric, or adapter is a file and a `register` call, never a change to `src/core`.
 
-One tick, in order: the activation policy selects agents, executors observe and render prompts, providers decide in batches, actions resolve into effects, the resolver applies them, modules step, instruments measure, and a completion assertion confirms every activated agent has exactly one decision or failure.
+One tick, in order:
+
+```mermaid
+flowchart LR
+    A["activation policy<br/>selects agents"] --> B["executors observe<br/>components render prompts"]
+    B --> C["providers decide<br/>batched, typed Result"]
+    C --> D["actions resolve<br/>into effects"]
+    D --> E["resolver applies<br/>merge rules, rejections"]
+    E --> F["modules step<br/>feed, graph, calendar"]
+    F --> G["instruments measure<br/>metrics, provider audits"]
+    G --> H["completion assertion<br/>one decision or failure per agent"]
+    B -. observation .-> LOG[("event log")]
+    C -. decision · llm_call .-> LOG
+    E -. effect · failure .-> LOG
+    G -. measurement .-> LOG
+```
 
 Two executors share the same state bus. Focal agents are component-based with declared reads and writes, for small high-fidelity populations. Cohorts are columnar and vectorized, for populations in the hundred thousands driven by rules, surrogates, or archetype broadcasts.
+
+## Examples
+
+Two scenarios ship in `examples/` and double as the acceptance fixtures:
+
+| scenario                   | what it models                                                                                                                                     | knobs in `params`                                                                                      | metrics                                              |
+| -------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------ | ---------------------------------------------------- |
+| `prisoners_dilemma`        | an LLM player against a rule opponent over 10 rounds; the module, both actions and the opponent strategies live in `rules.ts` as a plugin template | `framing` canonical · moralized · risk, `opponent` titForTat · random · alwaysCooperate · alwaysDefect | `cooperationRate`, `averagePayoff`                   |
+| `echo_chamber`             | 100 people on a power-law social graph with homophily rewiring and hub assignment, posting and reposting through a recommender feed                | `homophily`, `hub`, `activation`, `memoryWindow`, `feedSize`                                           | `stanceAssortativity`, `sameGroupRatio`, `postShare` |
+| `echo_chamber/cohort.yaml` | the same population as a columnar cohort of 100,000 with vectorized opinion dynamics                                                               | `n`                                                                                                    | `meanStance`                                         |
+
+Each has an `audit.yaml` next to it. Programmatic examples in `examples/programmatic/` run against the public API and are executed by the test suite:
+
+| file                      | shows                                                                                                    |
+| ------------------------- | -------------------------------------------------------------------------------------------------------- |
+| `01-run-and-inspect.ts`   | run a scenario, read metrics and integrity, query the event log with SQL, print one agent's causal chain |
+| `02-custom-plugin.ts`     | define a module, two actions and a rule provider in code and run a scenario built from a YAML string     |
+| `03-audit.ts`             | run an audit from code, read the evidence grade and sensitivity ranking, render the HTML report          |
+| `04-replay-recordings.ts` | replay the shipped DeepSeek recordings offline and confirm two replays share a digest                    |
+| `05-cohort-scale.ts`      | override the population size of the cohort scenario and measure throughput                               |
+
+```bash
+bun examples/programmatic/01-run-and-inspect.ts
+```
+
+The core of the first one:
+
+```ts
+import { inspect, loadScenario, runScenario, withRunLog } from "@misakaikato/simulacra";
+
+const scenario = loadScenario("examples/echo_chamber/scenario.yaml");
+if (!scenario.ok) throw new Error(JSON.stringify(scenario.error));
+
+const result = await runScenario(scenario.value, "runs/echo", {
+	providerOverride: "mock",
+	ticksOverride: 5,
+});
+if (!result.ok) throw new Error(result.error.message);
+console.log(result.value.metrics, result.value.integrity);
+
+const counts = withRunLog("runs/echo", (log) => ({
+	ok: true as const,
+	value: log.sql<{ kind: string; n: number }>(
+		"select kind, count(*) as n from events group by kind",
+	),
+}));
+
+const trace = inspect("runs/echo", { agentId: someAgentId, tick: 2 });
+```
 
 ## Extending
 
