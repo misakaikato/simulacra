@@ -1,10 +1,12 @@
 import { describe, expect, test } from "bun:test";
-import { existsSync, mkdtempSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Hono } from "hono";
 import {
 	GUI_DIST_DIR,
+	RESULT_FILE,
+	SCENARIO_FILE,
 	createApp,
 	createRunRegistry,
 	loadAuditPlan,
@@ -181,6 +183,24 @@ describe("HTTP API", () => {
 			expect([path, res.status]).toEqual([path, 404]);
 			expect(await res.json()).toMatchObject({ error: expect.any(String) });
 		}
+	});
+
+	test("a run directory with an unreadable result.json is listed as failed with the error", async () => {
+		const { app, dataDir } = setup();
+		const runDir = join(dataDir, "runs", "x__0");
+		mkdirSync(runDir, { recursive: true });
+		writeFileSync(join(runDir, SCENARIO_FILE), JSON.stringify(scenarioOf({ scenarioId: "x" })));
+		writeFileSync(join(runDir, RESULT_FILE), "{");
+		const listed = (await (await app.request("/api/runs")).json()) as RunSummary[];
+		expect(listed).toHaveLength(1);
+		const first = listed[0];
+		expect(first?.error).toContain(join(runDir, RESULT_FILE));
+		expect(first).toMatchObject({
+			runId: "x:0",
+			progress: { tick: 0, ticks: 4, status: "failed" },
+		});
+		const one = (await (await app.request("/api/runs/x%3A0")).json()) as RunSummary;
+		expect(one.error).toBe(first?.error ?? "");
 	});
 
 	test("POST /api/runs validates its body and reports issues", async () => {
