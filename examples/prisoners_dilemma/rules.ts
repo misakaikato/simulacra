@@ -1,3 +1,11 @@
+// Plugin of the prisoner's dilemma example: a world module that pairs agents by ordinal, exposes
+// the cooperate and defect actions and settles each round's payoffs in step(), plus a rule
+// provider with four fixed opponent strategies (titForTat by default). register() is the
+// plugin entry point the scenario's plugins list names.
+// 囚徒困境示例的插件：一个世界模块按序数把 agent 配对、暴露 cooperate 与 defect 动作、
+// 在 step() 结算每轮收益；另有一个规则 provider 提供对手的四种固定策略（默认 titForTat）。
+// register() 是场景 plugins 列表所指的插件入口。
+
 import { z } from "zod";
 import {
 	ORDINAL_COLUMN,
@@ -44,6 +52,8 @@ export type Move = (typeof MOVES)[number];
 const STRATEGIES = ["titForTat", "random", "alwaysCooperate", "alwaysDefect"] as const;
 export type Strategy = (typeof STRATEGIES)[number];
 
+// The standard payoff matrix (T=5, R=3, P=1, S=0), indexed as own move : opponent move.
+// 标准收益矩阵（T=5、R=3、P=1、S=0），以“自己的动作:对手的动作”索引。
 export const PAYOFFS: Readonly<Record<`${Move}:${Move}`, readonly [number, number]>> = {
 	"cooperate:cooperate": [3, 3],
 	"cooperate:defect": [0, 5],
@@ -67,6 +77,9 @@ const isMove = (v: Scalar | undefined): v is Move =>
 
 const numberOf = (v: Scalar | undefined): number => (typeof v === "number" ? v : 0);
 
+// Pairs follow the population ordinal, so pairing is a pure function of the world and the
+// module needs no state of its own (getState returns null).
+// 配对按人口序数进行，因此配对是世界的纯函数，模块自身无需状态（getState 返回 null）。
 const pairsOf = (view: WorldView, entity: string): readonly (readonly [EntityId, EntityId])[] => {
 	const ordinal = view.column<number>(entity, ORDINAL_COLUMN);
 	const ordered = [...view.ids(entity)].sort(
@@ -114,6 +127,9 @@ class PrisonersDilemmaModule implements Module {
 		return ok(undefined);
 	}
 
+	// defect is the fallback action, so an unparseable LLM answer counts as a defection rather
+	// than a skipped round.
+	// defect 是回退动作，LLM 的回答解析不了时算作背叛，而不是跳过这一轮。
 	actions(): readonly ActionDef[] {
 		const choose = (move: Move, description: string, fallback: boolean): ActionDef =>
 			defineAction({
@@ -158,6 +174,11 @@ class PrisonersDilemmaModule implements Module {
 		return out;
 	}
 
+	// A round settles only when both moves are set; a lone move is reset so a partner that failed
+	// to act does not leave a stale choice for the next round. Effects carry ZERO_EVENT_ID as a
+	// placeholder cause; the kernel restamps module effects with the module_step event id.
+	// 只有双方动作都已设置这一轮才结算；落单的动作被重置，没能行动的搭档不会把过期选择留到下一轮。
+	// 效果以 ZERO_EVENT_ID 作占位 cause；内核会把模块效果的 cause 改盖为 module_step 事件 id。
 	async step(view: WorldView, _t: LogicalTime, _rng: Rng): Promise<readonly Effect[]> {
 		const effects: Effect[] = [];
 		const cause = ZERO_EVENT_ID;
@@ -248,6 +269,9 @@ const decide = (req: DecisionRequest, move: Move): Decision => ({
 	parseOk: true,
 });
 
+// Strategies read the opponent's last action from the module's observation, the same JSON the
+// LLM player sees; only `random` draws from the rng.
+// 策略从模块的观察里读对手上一次的动作，与 LLM 玩家看到的是同一份 JSON；只有 random 用到 rng。
 export const strategies: Readonly<Record<Strategy, RuleFn>> = {
 	titForTat: (req) => decide(req, opponentLastAction(req) === "defect" ? "defect" : "cooperate"),
 	random: (req, rng) => decide(req, rng.bernoulli(0.5) ? "cooperate" : "defect"),
