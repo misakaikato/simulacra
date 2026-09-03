@@ -1,3 +1,11 @@
+// OpenAI-compatible chat gateway carrying the whole LLM policy: AIMD concurrency, retries with
+// exponential backoff, a per-batch circuit breaker, json_schema-to-prompt fallback, record and
+// replay keyed by sha256(promptHash, seed, params), nonce injection for the homogeneous guard,
+// the call budget, and a cost ledger bucketed by purpose.
+// 兼容 OpenAI 的对话网关，承载全部 LLM 策略：AIMD 并发、指数退避重试、按批次的断路器、json_schema
+// 到 prompt 的回退、以 sha256(promptHash, seed, params) 为键的录制与回放、同质守卫的 nonce 注入、
+// 调用预算，以及按 purpose 分桶的成本账本。
+
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { z } from "zod";
@@ -30,6 +38,10 @@ export interface Gateway extends LLMGateway {
 	callsStarted(): number;
 }
 
+// Retry, backoff and breaker constants from the spec: three retries with 1s doubling to a 60s
+// cap, twenty stable successes per additive step, ten final failures to open the circuit.
+// 规格给定的重试、退避与断路常量：最多重试三次，1s 起倍增、封顶 60s，每二十次稳定成功加一并发，
+// 十次最终失败断路。
 const MAX_RETRIES = 3;
 const BACKOFF_CAP_MULTIPLIER = 60;
 const AIMD_STABLE_SUCCESSES = 20;
@@ -52,6 +64,10 @@ const addCost = (a: Cost, b: Cost): Cost => ({
 	wallMs: a.wallMs + b.wallMs,
 });
 
+// AIMD: a 429 or timeout halves the limit at once, twenty consecutive successes add one; the
+// limit stays within [1, max]. Waiters are released as the limit grows.
+// AIMD：一次 429 或超时立即把并发减半，连续二十次成功加一；上限始终在 [1, max] 内。
+// 并发放宽时唤醒等待者。
 class AdaptiveSemaphore {
 	private limit: number;
 	private readonly max: number;
@@ -113,6 +129,9 @@ const UsageSchema = z
 	})
 	.optional();
 
+// Only the fields the gateway reads are parsed; reasoning_content is needed to tell an empty
+// answer apart from an answer that went entirely into the reasoning channel.
+// 只解析网关会读的字段；reasoning_content 用于区分真正的空回复与整段落进推理通道的回复。
 const CompletionSchema = z.object({
 	model: z.string().optional(),
 	choices: z
@@ -132,6 +151,7 @@ const CompletionSchema = z.object({
 const FINISH_LENGTH = "length";
 
 // Request-body keys the gateway owns; LLMSpec.extra never overrides them
+// 网关自有的请求体键；LLMSpec.extra 永远不能覆盖它们
 const RESERVED_BODY_KEYS: ReadonlySet<string> = new Set([
 	"model",
 	"messages",
@@ -141,6 +161,9 @@ const RESERVED_BODY_KEYS: ReadonlySet<string> = new Set([
 	"response_format",
 ]);
 
+// A recording stores request metadata and the raw response text; parsed output is derived
+// again on replay so a recording never bakes in a parser version.
+// 录制文件保存请求元数据与原始响应文本；解析结果在回放时重新推导，录制不会固化某个解析器版本。
 const RecordingSchema = z.object({
 	version: z.literal(1),
 	key: z.string(),
@@ -211,6 +234,11 @@ const withSystemSuffix = (
 	);
 };
 
+// The nonce is appended to the system message after promptHash is taken, so identical prompts
+// across agents get distinct text (defeating provider-side cache collapse) without changing
+// promptHash or the recording key.
+// nonce 在计算 promptHash 之后追加到 system 消息末尾，不同 agent 的相同 prompt 因此文本各异
+//（避免提供方缓存把它们折叠），而 promptHash 与录制键都不受影响。
 const nonceOf = (req: LLMRequest): string | undefined => {
 	const id = req.tags.eventId ?? req.tags.requestId;
 	return id === undefined ? undefined : `<!-- nonce:${id} -->`;
@@ -250,6 +278,10 @@ class HttpGateway implements Gateway {
 		return this.run(req, undefined);
 	}
 
+	// Requests are sorted by system prefix so prefix-cached calls run adjacent; results return in
+	// request order. The circuit is per batch: once open, the rest of the batch fails at once.
+	// 请求按 system 前缀排序，前缀缓存命中的调用相邻发出；结果按请求顺序返回。断路器按批次：
+	// 一旦打开，本批余下请求立即失败。
 	async completeMany(
 		reqs: readonly LLMRequest[],
 	): Promise<readonly Result<LLMResponse, LLMFailure>[]> {
@@ -297,6 +329,10 @@ class HttpGateway implements Gateway {
 		const promptHash = hashOf(req.messages);
 		const purpose = req.tags.purpose ?? "unknown";
 		const startedAt = performance.now();
+		// Cost is counted once per outcome, never per attempt, and never for replay hits; a failure
+		// adds wall time only. Every failure also reaches onFailure so the kernel records it.
+		// 成本按结果计一次，不按尝试次数计，回放命中不计；失败只累加墙钟时间。每个失败同时送到
+		// onFailure，由内核记录。
 		const settle = (
 			r: Result<LLMResponse, LLMFailure>,
 			replayed = false,
@@ -346,6 +382,10 @@ class HttpGateway implements Gateway {
 		this.logger.trace("llm prompt", { promptHash, preview: preview(req.messages) });
 
 		const maxTokens = Math.min(req.maxTokens, this.spec.budget.maxCompletionTokens);
+		// Recording key: promptHash, seed and the parameters that change the answer (model,
+		// temperature, capped maxTokens, structured mode, extra). Tags and the nonce are excluded.
+		// 录制键：promptHash、seed，以及会改变回答的参数（model、temperature、封顶后的 maxTokens、
+		// 结构化模式、extra）。tags 与 nonce 不参与。
 		const key = hashOf([
 			promptHash,
 			req.seed ?? null,
@@ -358,6 +398,9 @@ class HttpGateway implements Gateway {
 			},
 		]);
 
+		// Replay never touches the network: a miss is a final failure the kernel turns into a
+		// fallback decision.
+		// 回放从不访问网络：未命中是最终失败，由内核转成回退决策。
 		if (this.spec.mode === "replay") {
 			const recording = this.readRecording(key);
 			if (recording === undefined)
@@ -441,6 +484,10 @@ class HttpGateway implements Gateway {
 		};
 	}
 
+	// auto starts with json_schema and flips to prompt for the rest of the run after one 400;
+	// the flip is gateway-wide because the endpoint, not the request, rejected the mode.
+	// auto 先用 json_schema，遇到一次 400 后本 run 余下全部改用 prompt；切换作用于整个网关，
+	// 因为拒绝该模式的是端点而不是某个请求。
 	private usePromptMode(req: LLMRequest): boolean {
 		if (req.schema === undefined) return false;
 		if (this.spec.structured === "prompt") return true;
@@ -459,6 +506,9 @@ class HttpGateway implements Gateway {
 		return messages;
 	}
 
+	// extra is merged first so the gateway-owned keys always win; seed is sent only when the
+	// spec allows it, since some local servers reject the field.
+	// extra 先合并，网关自有的键始终覆盖它；seed 只在规格允许时发送，部分本地服务会拒绝该字段。
 	private buildBody(req: LLMRequest, maxTokens: number, promptMode: boolean): JsonObject {
 		const body: Record<string, JsonValue> = {};
 		for (const [key, value] of Object.entries(this.spec.extra ?? {}))
@@ -511,6 +561,9 @@ class HttpGateway implements Gateway {
 		return { kind: "ok", body: parsed, latencyMs: performance.now() - started };
 	}
 
+	// The circuit counts final failures after retries; once open, every remaining request in
+	// the batch fails immediately with CircuitOpen.
+	// 断路器统计重试耗尽后的最终失败；一旦打开，本批余下请求立即以 CircuitOpen 失败。
 	private async attempt(
 		req: LLMRequest,
 		promptHash: string,
@@ -543,6 +596,11 @@ class HttpGateway implements Gateway {
 						retryable: false,
 						attempts: attempts - 1,
 					});
+				// The budget counts started network calls once per request: retries of the same
+				// request do not consume it, and the check runs under the semaphore so concurrent
+				// requests cannot overshoot maxCalls.
+				// 预算按请求计一次已发起的网络调用：同一请求的重试不再消耗，且检查在信号量内进行，
+				// 并发请求不会超出 maxCalls。
 				if (!sent) {
 					if (this.started >= this.spec.budget.maxCalls)
 						return err({
@@ -567,6 +625,11 @@ class HttpGateway implements Gateway {
 					const completionTokens = completion.success
 						? (completion.data.usage?.completion_tokens ?? 0)
 						: 0;
+					// Empty content with finish_reason length means the token budget went to
+					// reasoning; empty content beside reasoning_content means the model answered
+					// only in the reasoning channel. Both are final; the message names the knob.
+					// content 为空且 finish_reason 为 length，说明 token 预算被推理耗尽；content 为空但有
+					// reasoning_content，说明模型只在推理通道作答。两者都是最终失败，消息指明该调哪个开关。
 					if (completion.success && empty && finishReason === FINISH_LENGTH)
 						return finalFailure(
 							{
@@ -621,6 +684,9 @@ class HttpGateway implements Gateway {
 					req.schema !== undefined &&
 					this.spec.structured === "auto"
 				) {
+					// The structured fallback attempt does not count as a retry, and its failure
+					// event is recorded once per gateway rather than once per request.
+					// 结构化回退的那次尝试不计入重试次数，其 failure 事件按网关只记一次，而不是每个请求一次。
 					if (!this.promptFallback) {
 						this.promptFallback = true;
 						const failure: LLMFailure = {
@@ -640,6 +706,9 @@ class HttpGateway implements Gateway {
 					continue;
 				}
 
+				// 429 and timeouts shrink the concurrency window before the retry decision; the
+				// backoff sleeps outside the semaphore so the slot stays free for other requests.
+				// 429 与超时在决定重试之前先收缩并发窗口；退避等待在信号量之外进行，槽位留给其它请求。
 				const classified = classify(outcome);
 				if (
 					outcome.kind === "timeout" ||
@@ -728,6 +797,8 @@ class HttpGateway implements Gateway {
 	}
 }
 
+// 429 and 5xx are retryable, other 4xx are final; timeouts and network errors retry.
+// 429 与 5xx 可重试，其它 4xx 为最终失败；超时与网络错误可重试。
 const classify = (
 	outcome: Exclude<Outcome, { readonly kind: "ok" }>,
 ): Pick<LLMFailure, "excType" | "message" | "retryable"> => {
