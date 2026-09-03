@@ -1,3 +1,9 @@
+// Columnar executor for large populations: observes z-scored features for a whole cohort at
+// once, hands decisions to a registered Transition that writes setColumn effects, and emits one
+// observation_batch per tick instead of per-agent observation events.
+// 面向大规模人口的列式执行体：一次性观察整批 agent 的 z 分数特征，把决策交给注册的转移函数写
+// setColumn 效果，每 tick 只写一条 observation_batch 而不是逐 agent 的观察事件。
+
 import { z } from "zod";
 import { makeEvent } from "../core/events";
 import { makeRunId, newEventId, toEntityId } from "../core/ids";
@@ -51,6 +57,7 @@ export const CohortOptionsSchema = z.object({
 	where: WhereSchema.optional(),
 	// Store the per-tick feature matrix in the content store and reference it from the
 	// observation_batch event; off by default to keep observation free of content writes.
+	// 把每 tick 的特征矩阵存进内容库并由 observation_batch 事件引用；默认关闭，让观察阶段不写内容。
 	recordFeatures: z.boolean().default(false),
 });
 
@@ -65,6 +72,9 @@ const numberOf = (v: Scalar | undefined): number => (typeof v === "number" ? v :
 
 const scalarJson = (v: Scalar): JsonValue => (Array.isArray(v) ? [...v] : v);
 
+// Population statistics use the biased (1/n) standard deviation and treat non-numeric cells as
+// 0; a constant column yields sd 0 and every z-score collapses to 0 rather than NaN.
+// 总体统计用有偏（除以 n）的标准差，非数值单元按 0 计；常量列 sd 为 0，z 分数统一取 0 而不是 NaN。
 export const columnStats = (column: ReadonlyColumn<Scalar>): ColumnStats => {
 	const n = column.length;
 	if (n === 0) return { mean: 0, sd: 0 };
@@ -96,10 +106,16 @@ const graphOf = (modules: ReadonlyMap<string, { graph?(): GraphView }>): GraphVi
 // A columnar executor: observation is a feature matrix computed straight from world columns,
 // decisions are handed in bulk to a Transition that writes setColumn effects. Events are
 // batched per tick: one observation_batch here, one decision_batch from the kernel.
+// 列式执行体：观察是直接由世界列算出的特征矩阵，决策整批交给写 setColumn 效果的转移函数。
+// 事件按 tick 聚合：这里写一条 observation_batch，内核写一条 decision_batch。
 class CohortExecutor implements Executor {
 	readonly name: string;
 	readonly entity: string;
 	readonly provider: string;
+	// Both flags change the kernel path: resolvesOwnActions skips registry validation and resolve
+	// for virtual actions, batchEvents switches the kernel to decision_batch events.
+	// 两个标志都改变内核路径：resolvesOwnActions 让虚拟动作跳过注册表校验与解析，
+	// batchEvents 让内核改写 decision_batch 事件。
 	readonly resolvesOwnActions = true;
 	readonly batchEvents = true;
 	readonly fallbackAction: string;
@@ -127,6 +143,10 @@ class CohortExecutor implements Executor {
 		this.logger = ctx.logger.child({ component: `executor:${name}` });
 	}
 
+	// Features, the neighbour-mean column and the transition's reads/writes must all be declared
+	// columns of the entity; unlike focal components nothing here is produced by another plugin.
+	// 特征列、邻居均值列与转移函数的读写列都必须是该实体已声明的列；与 focal 组件不同，
+	// 这里没有任何键由其它插件产出。
 	declare(world: World): Result<void, DeclareError> {
 		const available = new Set(world.columns(this.entity).map((c) => c.name));
 		const needed = [
@@ -146,6 +166,11 @@ class CohortExecutor implements Executor {
 		return matchesWhere(world.row(this.entity, id), this.where);
 	}
 
+	// One event id serves the whole batch and is the observationEvent of every request, so the
+	// kernel's decision_batch parents onto it. The neighbour mean falls back to the agent's own
+	// value when no neighbour has a numeric reading, keeping the feature vector fixed-length.
+	// 整批共用一个事件 id，也是每条请求的 observationEvent，内核的 decision_batch 以它为 parent。
+	// 没有邻居给出数值时邻居均值回退为 agent 自身的值，保证特征向量定长。
 	async observe(
 		world: WorldView,
 		ids: readonly EntityId[],
@@ -225,6 +250,10 @@ class CohortExecutor implements Executor {
 		return requests;
 	}
 
+	// The kernel stamps `cause = decision_batch.eventId` on these effects; the first module with
+	// a graph (the social graph) is passed so transitions can read neighbourhoods.
+	// 内核会给这些效果盖上 `cause = decision_batch.eventId`；第一个提供图的模块（社交图）
+	// 传给转移函数以便读取邻域。
 	async act(decisions: readonly Decision[], ctx: ResolveContext): Promise<readonly Effect[]> {
 		const ids = decisions.map((d) => d.agentId);
 		const graph = graphOf(ctx.modules);
@@ -250,6 +279,10 @@ class CohortExecutor implements Executor {
 const transitionSpecOf = (transition: CohortOptions["transition"]): PluginSpec =>
 	typeof transition === "string" ? { kind: transition } : transition;
 
+// fallbackAction defaults to the last virtual action and must be one of them: the kernel uses it
+// for agents whose provider call failed, so the transition must know how to treat it.
+// fallbackAction 默认取虚拟动作末项且必须属于该列表：内核用它兜底提供者失败的 agent，
+// 转移函数必须认得它。
 export const createCohortExecutor = (
 	spec: ExecutorSpec,
 	ctx: PluginContext,

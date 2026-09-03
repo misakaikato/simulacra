@@ -1,3 +1,9 @@
+// Built-in metrics: pure functions of the world view and the event log at the end of a run.
+// Group metrics rebuild an interaction graph from decision events, so they need no extra table;
+// stance groups follow appendix C's thresholds (< -0.5 anti, > 0.5 pro, neutral between).
+// 内置指标：运行结束时对世界视图与事件日志的纯函数。分组指标从决策事件重建交互图，
+// 不需要额外的表；立场分组按附录 C 的阈值（< -0.5 为 anti，> 0.5 为 pro，其间为 neutral）。
+
 import { z } from "zod";
 import { toEntityId } from "../core/ids";
 import type {
@@ -36,6 +42,7 @@ const columnSum = (view: WorldView, entity: string, column: string): number => {
 };
 
 // cooperationRate and averagePayoff: column ratios over the agent table
+// cooperationRate 与 averagePayoff：agent 表上两列之和的比值
 
 const RatioOptions = z.object({
 	entity: z.string().min(1).default("agent"),
@@ -78,6 +85,7 @@ const ratioFactory =
 	};
 
 // Interaction graph: (i, j) when i reposted or replied to a post authored by j
+// 交互图：i 转发或回复了 j 发的帖子时记一条边 (i, j)
 
 export const GroupOptionsSchema = z.object({
 	entity: z.string().min(1).default("agent"),
@@ -92,6 +100,10 @@ export type GroupOptions = z.output<typeof GroupOptionsSchema>;
 
 export type InteractionEdge = readonly [EntityId, EntityId];
 
+// Edges are read from per-agent decision events, which carry the args naming the post, rather
+// than from effects; cohort decision_batch events carry no args and never contribute.
+// 边取自逐 agent 的决策事件（其参数指明了帖子），而不是效果事件；
+// cohort 的 decision_batch 事件不带参数，永远不计入。
 export const interactionEdges = (
 	view: WorldView,
 	log: EventLog,
@@ -149,6 +161,10 @@ export const groupedEdges = (
 	});
 
 // r = (sum_u e_uu - sum_u a_u b_u) / (1 - sum_u a_u b_u)
+// Newman's assortativity for a discrete attribute on directed edges: e_uu is the within-group
+// share, a_u and b_u the source and target marginals; 1 is perfect sorting, 0 random mixing.
+// 有向边上离散属性的 Newman 同配系数：e_uu 是组内边占比，a_u 与 b_u 是出端与入端的组边际；
+// 1 为完全同配，0 为随机混合。
 export const assortativityOf = (edges: readonly (readonly [string, string])[]): number => {
 	const m = edges.length;
 	if (m === 0) return 0;
@@ -192,6 +208,7 @@ const groupFactory =
 	};
 
 // actionShare: share of decision events choosing one action
+// actionShare：选择某动作的决策事件占比；只数逐 agent 的 decision 事件，cohort 批量事件不计入
 
 const ActionShareOptions = z.object({ action: z.string().min(1) });
 
@@ -208,6 +225,7 @@ export const actionShareMetric = (name: string, action: string): Metric => ({
 });
 
 // tvdToTarget: total variation distance between a column histogram and a target
+// tvdToTarget：列直方图与目标分布之间的总变差距离
 
 const TvdOptions = z.object({
 	entity: z.string().min(1).default("agent"),
@@ -224,6 +242,10 @@ const normalize = (xs: readonly number[]): readonly number[] => {
 	return total > 0 ? xs.map((x) => x / total) : xs.map(() => 1 / xs.length);
 };
 
+// Numeric columns use equal-width bins (as many as the target has entries) over `range` or the
+// observed min/max; categorical columns map `categories` to bins in order.
+// 数值列在 `range`（或观测到的 min/max）上等宽分箱，箱数等于目标分布的长度；
+// 类别列按 `categories` 的顺序映射到各箱。
 export const histogramOf = (values: readonly Scalar[], options: TvdOptions): readonly number[] => {
 	const bins = options.target.length;
 	const counts = new Array<number>(bins).fill(0);
@@ -247,6 +269,10 @@ export const histogramOf = (values: readonly Scalar[], options: TvdOptions): rea
 	return counts;
 };
 
+// TVD = 1/2 * L1 distance. The target is normalised so it may be written as weights, and an
+// empty column yields an all-zero p, hence a TVD of 0.5 whatever the target.
+// TVD = 1/2 * L1 距离。目标分布会归一化，因此可以直接写权重；
+// 空列的 p 全为 0，此时 TVD 恒为 0.5，与目标无关。
 export const tvdOf = (p: readonly number[], q: readonly number[]): number =>
 	0.5 * p.reduce((acc, pi, i) => acc + Math.abs(pi - (q[i] ?? 0)), 0);
 
@@ -264,6 +290,7 @@ export const tvdToTargetMetric = (name: string, options: TvdOptions): Metric => 
 });
 
 // columnMean: arithmetic mean of a numeric column over all rows of an entity
+// columnMean：某实体全部行上一个数值列的算术平均
 
 const ColumnMeanOptions = z.object({
 	entity: z.string().min(1).default("agent"),

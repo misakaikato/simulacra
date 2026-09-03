@@ -1,3 +1,7 @@
+// Instructions component: the scenario's static brief plus, when an intervention targets this
+// agent, its one-off instruction; interventions reach agents only through this seam.
+// 指令组件：场景的静态说明，外加针对本 agent 的干预指令（若有）；干预只通过这一处触达 agent。
+
 import type { Component } from "../../core/protocols";
 import type { JsonObject, JsonValue } from "../../core/types";
 import { CONTEXT_KEYS, INTERVENTION_INSTRUCTION_KEY } from "./shared";
@@ -13,6 +17,7 @@ const interventionInstruction = (value: JsonValue | undefined): string | undefin
 
 // Static instructions, followed by an intervention's instruction when one is pending for
 // this agent's next observation.
+// 静态指令在前，若本 agent 下一次观察有待生效的干预，则把干预指令接在后面。
 export const instructions = (text: string): Component => ({
 	name: "instructions",
 	reads: [],

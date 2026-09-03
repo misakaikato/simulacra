@@ -1,3 +1,9 @@
+// LLM provider: one gateway call per request, batched through completeMany; the structured
+// reply is validated as {action, args, rationale} and must name an action in the request's
+// action space. Every response, parseable or not, is recorded as an llm_call event.
+// LLM 提供者：每条请求一次网关调用，经 completeMany 批发；结构化回复按 {action, args, rationale}
+// 校验，动作必须在请求的动作空间内。无论能否解析，每次响应都记一条 llm_call 事件。
+
 import { z } from "zod";
 import { makeEvent } from "../core/events";
 import { FAILURE_TYPES } from "../core/failures";
@@ -65,6 +71,11 @@ class LlmProvider implements DecisionProvider {
 		this.logger = deps.logger.child({ component: `provider:${options.name}` });
 	}
 
+	// Requests without a rendered prompt never reach the gateway and fail as noPrompt. llm_call
+	// event ids come from an rng derived from the round seed path and provider name, drawn in
+	// request order, so they are identical on replay whatever the gateway's timing.
+	// 没有渲染 prompt 的请求不会到达网关，直接记 noPrompt 失败。llm_call 事件 id 由本轮种子路径
+	// 与提供者名派生的 rng 按请求顺序抽取，回放时与网关时序无关。
 	async decide(
 		requests: readonly DecisionRequest[],
 		ctx: RoundContext,
@@ -111,6 +122,10 @@ class LlmProvider implements DecisionProvider {
 		if (seedPath !== undefined) this.seedPath = seedPath;
 	}
 
+	// tags.eventId is the observation event: the gateway turns it into the homogeneous-guard nonce
+	// so identical prompts from different agents cannot collide in a prefix cache.
+	// tags.eventId 是观察事件 id：网关把它变成同质守卫的 nonce，
+	// 不同 agent 的相同 prompt 不会在前缀缓存里撞车。
 	private toLlmRequest(req: DecisionRequest, ctx: RoundContext): LLMRequest {
 		const prompt = req.prompt;
 		return {
@@ -129,6 +144,10 @@ class LlmProvider implements DecisionProvider {
 		};
 	}
 
+	// The llm_call event is appended before parsing so an unparseable reply still leaves its cost
+	// and response hash in the log; the decision links back to it through llmEvent.
+	// llm_call 事件在解析之前落日志，无法解析的回复也留下成本与响应哈希；
+	// 决策通过 llmEvent 回链到它。
 	private interpret(
 		req: DecisionRequest,
 		response: LLMResponse,

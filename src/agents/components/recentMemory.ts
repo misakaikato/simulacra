@@ -1,3 +1,8 @@
+// Recent-memory component: rebuilds the agent's short-term memory from the event log on every
+// observation, so memory is derived state that survives checkpoints without being stored twice.
+// 近期记忆组件：每次观察都从事件日志重建 agent 的短期记忆，记忆因此是派生状态，
+// 跨检查点无需另存一份。
+
 import type { Component, EventLog } from "../../core/protocols";
 import type { EntityId, Event, EventKind, JsonValue } from "../../core/types";
 import { CONTEXT_KEYS, type MemoryEntrySchema } from "./shared";
@@ -7,6 +12,10 @@ const RATIONALE_CHARS = 200;
 
 type Entry = z.output<typeof MemoryEntrySchema>;
 
+// A decision is remembered as action + args, flagged when it was a fallback, plus a capped slice
+// of the rationale fetched from the content store; the cap bounds prompt growth per entry.
+// 一条决策记为动作加参数，兜底决策加标记，再附上从内容库取出并截断的理由；
+// 截断上限约束每条记忆对 prompt 的膨胀。
 const describeDecision = (
 	e: Extract<Event, { readonly kind: "decision" }>,
 	log: EventLog,
@@ -35,6 +44,10 @@ export const memoryEntryOf = (e: Event, log: EventLog): Entry | undefined => {
 	}
 };
 
+// The log query is filtered by agentId, which is why interview events without agentId and
+// cohort batch events never appear in memory; the tail of the result keeps the newest k.
+// 日志按 agentId 查询，因此不带 agentId 的访谈事件与 cohort 批量事件永远进不了记忆；
+// 取结果尾部即最新的 k 条。
 export const recentEntries = (
 	log: EventLog,
 	agentId: EntityId,

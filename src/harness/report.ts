@@ -1,3 +1,9 @@
+// Self-contained HTML report for an audit: template strings only, one file, no external links,
+// scripts or fonts, so it opens offline and can be attached to a paper as-is. Every dynamic
+// string passes through escapeHtml and every number through formatNumber.
+// 审计的自包含 HTML 报告：只用模板字符串，单文件，无外链、脚本或字体，离线可开、可直接随论文
+// 附上。所有动态字符串都经 escapeHtml，所有数字都经 formatNumber。
+
 import type {
 	AuditReport,
 	Condition,
@@ -18,6 +24,10 @@ const ESCAPES: Readonly<Record<string, string>> = {
 
 export const escapeHtml = (s: string): string => s.replace(/[&<>"']/g, (ch) => ESCAPES[ch] ?? ch);
 
+// Infinities render as inf/-inf because JSON has already turned them into null (appendix E);
+// tiny magnitudes switch to exponential notation so small p-values stay readable.
+// 无穷大显示为 inf/-inf，因为 JSON 里它们已落为 null（附录 E）；
+// 极小的量改用科学计数法，小 p 值仍可读。
 export const formatNumber = (x: number | null | undefined, digits = 4): string => {
 	if (typeof x !== "number" || Number.isNaN(x)) return "n/a";
 	if (x === Number.POSITIVE_INFINITY) return "inf";
@@ -194,6 +204,9 @@ const pairwiseRow = (t: PairwiseTest): string =>
 	cell(mono(formatNumber(t.holmP)), true) +
 	cell(t.directionFlip ? `<span class="flag">flip</span>` : "");
 
+// When no pairwise test exists the note names the precondition that failed, checked in the
+// same order as the analysis, instead of a generic "none".
+// 没有成对检验时，说明文字按分析的检查顺序指出未满足的前提，而不是笼统的"none"。
 const pairwiseNote = (report: AuditReport): string => {
 	const summaries = summarizeConditions(report);
 	const usableOf = new Map(summaries.map((s) => [s.condition.conditionId, s.usable] as const));
@@ -242,6 +255,8 @@ const pairwiseSection = (report: AuditReport): string => {
 		.join("");
 };
 
+// Inline SVG bars scaled to the largest finite value; an infinite d fills the whole bar width.
+// 内联 SVG 条形图按最大有限值缩放；无穷大的 d 占满整个条宽。
 const sensitivitySvg = (report: AuditReport): string => {
 	const rows = report.sensitivityRank;
 	if (rows.length === 0) return `<p class="muted">none</p>`;
@@ -339,6 +354,9 @@ const integrityTable = (report: AuditReport): string => {
 	)}</div></div>`;
 };
 
+// Colours live in CSS variables with a prefers-color-scheme override, so the report follows the
+// reader's system theme without any script.
+// 颜色放在 CSS 变量里并按 prefers-color-scheme 覆盖，报告无需脚本即可跟随读者的系统主题。
 const STYLE = `
 :root { color-scheme: light dark; --bg: #f5f6f8; --fg: #1e2329; --muted: #5f6b78; --line: #d5dbe2; --card: #ffffff; --accent: #0e7c89; --accent-soft: #d6ecef; --flag: #9a4b12; }
 @media (prefers-color-scheme: dark) { :root { --bg: #141719; --fg: #e4e8ec; --muted: #98a3ae; --line: #2b3239; --card: #1b2024; --accent: #46b8c4; --accent-soft: #163a3f; --flag: #e0a15a; } }
