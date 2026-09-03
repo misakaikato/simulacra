@@ -1,3 +1,9 @@
+// Component-based executor for LLM-driven agents: components contribute context in declaration
+// order, the merged context is rendered into one prompt per agent, and the observation event is
+// logged before its DecisionRequest leaves. Actions are resolved by the kernel, never here.
+// 组件式执行体，面向 LLM 驱动的 agent：各组件按声明顺序贡献上下文，合并后为每个 agent 渲染一份
+// prompt，观察事件先落日志再交出 DecisionRequest。动作由内核解析，本文件从不产生效果。
+
 import { z } from "zod";
 import { zodToJsonSchema } from "../core/actions";
 import { makeEvent } from "../core/events";
@@ -55,6 +61,9 @@ export const FocalOptionsSchema = z.object({
 	where: WhereSchema.optional(),
 });
 
+// Context keys consumed by the prompt renderer itself (or carrying a pending intervention);
+// every other context key is passed through verbatim as part of `observation`.
+// 这些上下文键由 prompt 渲染器直接消费（或承载待生效的干预）；其余键原样并入 `observation`。
 const RESERVED_KEYS: readonly string[] = [
 	CONTEXT_KEYS.persona,
 	CONTEXT_KEYS.name,
@@ -132,6 +141,10 @@ class FocalExecutor implements Executor {
 		this.logger = ctx.logger.child({ component: `executor:${name}` });
 	}
 
+	// Dependency check walks components in scenario order: a read is satisfied by a declared
+	// column or by a write of an earlier component, so component order is part of the contract.
+	// 依赖校验按场景里的组件顺序进行：读键必须是已声明列或更早组件的写键，
+	// 因此组件顺序也是契约的一部分。
 	declare(world: World): Result<void, DeclareError> {
 		const available = new Set(world.columns(this.entity).map((c) => c.name));
 		for (const component of this.components) {
@@ -204,6 +217,11 @@ class FocalExecutor implements Executor {
 		);
 	}
 
+	// One observation event per agent is appended before the request exists so the kernel can
+	// name it as the decision event's parent. Interview rounds with `attribute` false omit
+	// `agentId`, so memory components never query them back.
+	// 每个 agent 先落一条观察事件再构造请求，内核据此把它记为决策事件的 parent。
+	// `attribute` 为 false 的访谈轮不带 `agentId`，记忆组件因此永远查不回它们。
 	private requestsFor(
 		world: WorldView,
 		ids: readonly EntityId[],
@@ -267,6 +285,10 @@ class FocalExecutor implements Executor {
 		return [];
 	}
 
+	// postAct is synchronous per decision; consolidate (which may call the LLM) runs afterwards
+	// with an rng forked per component so event ids stay deterministic whatever the gateway does.
+	// postAct 按决策同步执行；consolidate（可能调 LLM）随后进行，rng 按组件派生，
+	// 事件 id 因此不受网关时序影响。
 	async after(
 		decisions: readonly Decision[],
 		report: EffectReport,
@@ -338,6 +360,10 @@ class FocalExecutor implements Executor {
 		this.logger.error(message, { agentId, excType: FAILURE_TYPES.noAvailableActions });
 	}
 
+	// Module observations are visible to every component; a component's own output is visible only
+	// to later components whose `reads` match it, which makes reads/writes an enforced contract.
+	// 模块观察对所有组件可见；组件输出只对 `reads` 匹配的后续组件可见，
+	// reads/writes 由此成为强制契约而不只是文档。
 	private buildContext(
 		agentId: EntityId,
 		world: WorldView,
@@ -358,6 +384,9 @@ class FocalExecutor implements Executor {
 		return context;
 	}
 
+	// Questionnaire instructions are appended after the agent's usual instructions so the
+	// interview reads as an extra request rather than a replacement of the persona brief.
+	// 问卷指令追加在 agent 常规指令之后，访谈读起来是额外请求，而不是替换掉人设说明。
 	private promptInput(
 		agentId: EntityId,
 		context: ReadonlyMap<string, JsonValue>,

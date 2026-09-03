@@ -1,3 +1,8 @@
+// Registration entry for built-in cohort transitions; a transition is a pure column update the
+// cohort executor calls in act, registered in the `transitions` slot so scenarios pick it by kind.
+// 内置 cohort 转移函数的注册入口；转移函数是 cohort 执行体在 act 里调用的纯列更新，
+// 注册在 `transitions` 槽里供场景按 kind 选用。
+
 import type { DuplicatePlugin, PluginFactory, Registry, Transition } from "../../core/protocols";
 import { parseOptions } from "../../core/registry";
 import { ok } from "../../core/result";
