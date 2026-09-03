@@ -1,3 +1,9 @@
+// Audit page: plan summary with the evidence grade and its rule, condition table, pairwise
+// tests, sensitivity bars, direction consistency, cross-model means, distribution tests,
+// integrity and cost. Polls every 3 s while running; the report appears when all runs finish.
+// 审计页：带证据等级及其规则的计划摘要、条件表、成对检验、敏感度条形图、方向一致率、
+// 跨模型均值、分布检验、完整性与成本。运行中每 3 秒轮询；全部运行结束后出现报告。
+
 import { Fragment } from "react";
 import type { AuditPlan, AuditReport, Condition } from "../../../src/core/types";
 import { api } from "../api";
@@ -7,6 +13,9 @@ import { Empty, ErrorBar, Loading, StatusBadge } from "../components/Primitives"
 import { num, pct, short } from "../format";
 import { useInterval, useLoad } from "../hooks";
 
+// The grading rule is shown next to the badge so a reader knows what the grade required; the
+// text mirrors evidenceGrade in the harness.
+// 评级规则展示在徽章旁，读者知道该等级要求什么；文字与 harness 里的 evidenceGrade 一致。
 const GRADE_RULES: Readonly<Record<AuditReport["evidenceGrade"], string>> = {
 	weak: "fewer than 10 replications, or an axis with fewer than 2 levels",
 	moderate: "at least 10 replications and every axis has at least 2 levels",
@@ -102,6 +111,8 @@ const ConditionsTable = ({ conditions }: { readonly conditions: readonly Conditi
 		</table>
 	);
 
+// Inline SVG rather than canvas: a handful of rows, and the labels stay selectable text.
+// 用内联 SVG 而非 canvas：只有几行，标签仍是可选中的文本。
 const SensitivityBars = ({ rank }: { readonly rank: AuditReport["sensitivityRank"] }) => {
 	if (rank.length === 0) return <Empty label="No axes" small />;
 	const max = rank.reduce((m, [, v]) => Math.max(m, Math.abs(v)), 1e-9);

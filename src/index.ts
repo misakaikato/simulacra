@@ -1,3 +1,11 @@
+// Public API surface of simulacra: re-exports the core types, plugin primitives, harness,
+// adapters, API/MCP factories and the run registry, and wraps the core run/resume/replay/inspect
+// functions with plugin loading and the LLM gateway factory. cli/, api/, mcp/ and gui/ import
+// only this module; createDefaultRegistry() is where the built-in plugins are registered.
+// simulacra 的公共 API 面：重导出内核类型、插件原语、harness、适配器、API/MCP 工厂与运行注册表，
+// 并为内核的 run/resume/replay/inspect 包上插件加载与 LLM 网关工厂。cli/、api/、mcp/、gui/
+// 只导入本模块；内置插件在 createDefaultRegistry() 里注册。
+
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import pkg from "../package.json" with { type: "json" };
@@ -376,6 +384,11 @@ export const version: string = pkg.version;
 
 const gatewayFactory: GatewayFactory = (spec, opts) => createGateway(spec, opts);
 
+// Built-ins register in the order policies, providers, transitions, executors, modules,
+// metrics, instruments, adapters. A duplicate kind among built-ins is a programming error,
+// so it throws instead of returning a Result.
+// 内置插件按 policies、providers、transitions、executors、modules、metrics、instruments、
+// adapters 的顺序注册。内置之间出现重复 kind 属于编程错误，因此直接抛出而不返回 Result。
 export const createDefaultRegistry = (): Registry => {
 	const registry = createRegistry();
 	const results = [
@@ -394,6 +407,9 @@ export const createDefaultRegistry = (): Registry => {
 	return registry;
 };
 
+// Accepts a file path or YAML text; relative paths inside the scenario (plugins, recordings)
+// resolve against the file's directory, or against the process cwd for text.
+// 接受文件路径或 YAML 文本；场景里的相对路径（插件、录制）按文件所在目录解析，文本则按进程 cwd。
 export const loadScenario = (pathOrText: string): Result<Scenario, readonly ScenarioIssue[]> => {
 	const isFile = existsSync(pathOrText) && statSync(pathOrText).isFile();
 	const parsed = parseScenarioYaml(isFile ? readFileSync(pathOrText, "utf8") : pathOrText);
@@ -421,6 +437,10 @@ export interface RunOptions extends Omit<CoreRunOptions, "createGateway">, Plugi
 
 export type ResumeOptions = Omit<CoreResumeOptions, "createGateway"> & PluginOptions;
 
+// The gateway factory is injected here so core/ never imports llm/. Plugins named by the
+// scenario load before those passed in options, on the caller's registry or a fresh default one.
+// 网关工厂在此注入，core/ 因此永不导入 llm/。场景里指定的插件先于选项里传入的加载，
+// 注册到调用方给的注册表或新建的默认注册表上。
 const withGateway = <O extends PluginOptions>(
 	opts: O,
 ): Omit<O, "registry" | "plugins"> & { readonly createGateway: GatewayFactory } => {
@@ -454,6 +474,9 @@ export const runScenario = async (
 	return coreRunScenario(scenario, registry.value, outDir, withGateway(opts));
 };
 
+// Plugins come from the original run's scenario so a resumed run assembles the same registry
+// as the run that wrote the checkpoint.
+// 插件取自原运行的场景，续跑的运行装配出与写检查点的那次运行相同的注册表。
 export const resume = async (
 	checkpointDir: string,
 	ticks: number,
@@ -468,6 +491,11 @@ export const resume = async (
 
 export type KernelRunOptions = Omit<RunOptions, "overwrite" | "ticksOverride">;
 
+// The RunFn the harness expects: the seed replaces the scenario's, overwrite is forced because
+// the harness owns the directory, and a run that could not start becomes a failed RunResult
+// so the audit can count it instead of aborting.
+// harness 期望的 RunFn：种子覆盖场景里的，overwrite 强制为真因为目录归 harness 所有，
+// 没能启动的运行变成失败的 RunResult，审计可以计数而不是中止。
 export const kernelRunFn =
 	(opts: KernelRunOptions = {}): RunFn =>
 	async (scenario, seed, outDir) => {

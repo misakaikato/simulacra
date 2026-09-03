@@ -1,3 +1,9 @@
+// `simulacra serve`: builds the run registry and the Hono app from the public API and binds
+// Bun.serve to 127.0.0.1 only; --port 0 picks a free port and the actual address is printed.
+// The process stays alive until SIGINT or SIGTERM stops the server.
+// `simulacra serve`：用公共 API 构建运行注册表与 Hono 应用，Bun.serve 只绑定 127.0.0.1；
+// --port 0 取空闲端口并打印实际地址。进程一直存活，直到 SIGINT 或 SIGTERM 停止服务器。
+
 import { resolve } from "node:path";
 import { defineCommand } from "citty";
 import {
@@ -30,6 +36,9 @@ export const serveCommand = defineCommand({
 		if (port > MAX_PORT) return fail(`--port must be between 0 and ${MAX_PORT}, got ${port}`);
 		const dataDir = resolve(args.data ?? DEFAULT_DATA_DIR);
 		const logLevel = logLevelArg(args["log-level"]);
+		// Logs go to stderr through the pretty sink so stdout carries only the address and data
+		// lines, which scripts can read.
+		// 日志经 pretty sink 写到 stderr，stdout 只有地址与数据目录两行，便于脚本读取。
 		const logger = createLogger({
 			level: logLevel ?? levelFromEnv(),
 			sinks: [prettySink((line) => console.error(line))],

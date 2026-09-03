@@ -1,3 +1,11 @@
+// Centre pane of the run page: a hand-written force-directed layout of the agent graph on a
+// canvas with pan, zoom and node picking. Graphs above MAX_NODES are sampled by degree,
+// repulsion uses a uniform grid so one step is near linear, and nodes are coloured by a numeric
+// column (persona.stance by default) on a low-to-accent ramp.
+// 运行页中栏：agent 图在 canvas 上的自写力导向布局，支持平移、缩放与点选节点。
+// 超过 MAX_NODES 的图按度数采样，斥力用均匀网格使单步接近线性，节点按数值列
+//（默认 persona.stance）从低色到强调色着色。
+
 import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent } from "react";
 import type { EntityId, Scalar } from "../../../src/core/types";
 import type { AgentRow, GraphEdge } from "../api";
@@ -9,6 +17,10 @@ import { Empty } from "./Primitives";
 export const MAX_NODES = 5000;
 const DEFAULT_COLUMN = "persona.stance";
 
+// Layout constants: a spring on each link towards LINK_LENGTH, grid-cell repulsion, a weak pull
+// to the centre, velocity damping and an alpha that decays until ALPHA_MIN stops the loop.
+// 布局常量：每条边向 LINK_LENGTH 收的弹簧、网格斥力、微弱的向心拉力、速度阻尼，
+// 以及衰减到 ALPHA_MIN 即停止循环的 alpha。
 const TAU = Math.PI * 2;
 const CELL = 60;
 const LINK_LENGTH = 30;
@@ -74,6 +86,9 @@ interface Props {
 	readonly onSelect: (id: EntityId | undefined) => void;
 }
 
+// FNV-1a on the id gives every node a stable initial position, so the same run lays out the
+// same way on every load.
+// 对 id 做 FNV-1a，每个节点的初始位置稳定，同一运行每次加载布局都一样。
 const hash32 = (text: string): number => {
 	let h = 2166136261;
 	for (let i = 0; i < text.length; i++) {
@@ -83,6 +98,10 @@ const hash32 = (text: string): number => {
 	return h >>> 0;
 };
 
+// Above MAX_NODES the highest-degree nodes are kept (ties by id) and edges are restricted to
+// the kept set; the toolbar reports the sampling so nobody mistakes the sample for the graph.
+// 超过 MAX_NODES 时保留度数最高的节点（同度按 id），边只保留两端都在集合内的；
+// 工具栏标明采样，免得把样本当成整张图。
 const sampleGraph = (agents: readonly AgentRow[], edges: readonly GraphEdge[]): Sampled => {
 	if (agents.length <= MAX_NODES) return { nodes: agents, edges, total: agents.length };
 	const degree = new Map<EntityId, number>();
@@ -109,6 +128,9 @@ const numericColumns = (agents: readonly AgentRow[]): readonly string[] => {
 	return [...names].sort();
 };
 
+// Nodes already present in the previous simulation keep their positions, so an SSE refresh
+// nudges the layout instead of restarting it.
+// 上一轮模拟里已有的节点保留位置，SSE 刷新只微调布局而不是从头再来。
 const buildSim = (sampled: Sampled, previous: Sim | undefined): Sim => {
 	const spread = 12 * Math.sqrt(sampled.nodes.length);
 	const nodes = sampled.nodes.map((a): SimNode => {
@@ -138,6 +160,11 @@ const buildSim = (sampled: Sampled, previous: Sim | undefined): Sim => {
 
 const cellKey = (cx: number, cy: number): number => (cx + 32768) * 65536 + (cy + 32768);
 
+// One layout iteration. Repulsion acts only between nodes in the same or adjacent grid cells,
+// an O(n) approximation of n-body that is enough for a readable picture; distances are floored
+// so coincident nodes cannot produce infinite forces.
+// 一次布局迭代。斥力只在同一或相邻网格单元的节点之间起作用，是 n 体的 O(n) 近似，
+// 足够画出可读的图；距离设了下限，重合的节点不会产生无穷大的力。
 const step = (sim: Sim): void => {
 	const alpha = sim.alpha;
 	for (const { a, b } of sim.links) {
@@ -188,6 +215,9 @@ const step = (sim: Sim): void => {
 	sim.alpha = next < ALPHA_MIN ? 0 : next;
 };
 
+// Nodes without the column get the low colour; a span of zero maps every value to the high
+// colour. Returns the range for the legend, or undefined when no node had the column.
+// 没有该列的节点取低色；跨度为零时所有值映射到高色。返回图例用的范围，无节点有该列时返回 undefined。
 const colorize = (
 	sim: Sim,
 	column: string | undefined,
@@ -235,6 +265,11 @@ export const NetworkCanvas = ({ agents, edges, selected, onSelect }: Props) => {
 	const dragRef = useRef<Drag | undefined>(undefined);
 	const hasCanvas = sampled.nodes.length > 0;
 
+	// The transform maps layout space to CSS pixels through the view, then to device pixels
+	// through dpr; edge alpha drops on dense graphs so nodes stay visible. Line widths are divided
+	// by the zoom so they stay constant in CSS pixels.
+	// 变换先经 view 把布局空间映射到 CSS 像素，再经 dpr 映射到设备像素；稠密图降低边的透明度，
+	// 节点才不被淹没。线宽除以缩放比，在 CSS 像素下保持不变。
 	const draw = useCallback(() => {
 		const canvas = canvasRef.current;
 		const sim = simRef.current;
@@ -305,6 +340,10 @@ export const NetworkCanvas = ({ agents, edges, selected, onSelect }: Props) => {
 		draw();
 	}, [draw]);
 
+	// Two steps per frame while alpha > 0. The view auto-fits each frame until the user pans or
+	// zooms; after that only draw() runs so the layout never moves under the pointer.
+	// alpha > 0 时每帧两步。用户平移或缩放之前每帧自动适配视图；之后只跑 draw()，
+	// 布局不会在指针下面移动。
 	const loop = useCallback(() => {
 		frameRef.current = 0;
 		const sim = simRef.current;
@@ -355,6 +394,10 @@ export const NetworkCanvas = ({ agents, edges, selected, onSelect }: Props) => {
 	useEffect(() => {
 		const canvas = canvasRef.current;
 		if (!canvas) return undefined;
+		// Zoom about the pointer: the layout point under the cursor stays fixed. Registered
+		// natively with passive: false because React's onWheel cannot preventDefault scrolling.
+		// 围绕指针缩放：光标下的布局点保持不动。以 passive: false 原生注册，
+		// 因为 React 的 onWheel 无法 preventDefault 阻止页面滚动。
 		const onWheel = (e: WheelEvent): void => {
 			e.preventDefault();
 			const { width, height } = sizeCanvas(canvas);
@@ -373,6 +416,9 @@ export const NetworkCanvas = ({ agents, edges, selected, onSelect }: Props) => {
 		return () => canvas.removeEventListener("wheel", onWheel);
 	}, [draw, hasCanvas]);
 
+	// Picking works in layout space with a radius scaled by the zoom, so a node is as easy to hit
+	// zoomed out as zoomed in; the nearest node within the radius wins.
+	// 拾取在布局空间进行，半径随缩放比换算，缩小与放大时节点一样好点中；半径内最近的节点胜出。
 	const pick = (clientX: number, clientY: number): EntityId | undefined => {
 		const canvas = canvasRef.current;
 		const sim = simRef.current;
@@ -395,6 +441,9 @@ export const NetworkCanvas = ({ agents, edges, selected, onSelect }: Props) => {
 		return best?.id;
 	};
 
+	// Pointer capture keeps a drag alive outside the canvas; a move under 3 px still counts as a
+	// click, so a slightly shaky click selects instead of panning.
+	// 指针捕获让拖拽越出画布也不中断；移动不足 3 像素仍算点击，手抖的点击是选择而不是平移。
 	const onPointerDown = (e: PointerEvent<HTMLCanvasElement>): void => {
 		const view = viewRef.current;
 		dragRef.current = { sx: e.clientX, sy: e.clientY, tx: view.tx, ty: view.ty, moved: false };

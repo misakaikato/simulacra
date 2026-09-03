@@ -1,3 +1,9 @@
+// `simulacra doctor`: prints the environment checks and, with --llm, the endpoint probe, which
+// is capped at 6 calls so the command never spends more than a few tokens. Any failed check
+// makes the command exit non-zero.
+// `simulacra doctor`：打印环境检查，带 --llm 时再打印端点探测；探测上限 6 次调用，
+// 命令绝不会花费超过几个 token。任一检查失败即以非零退出。
+
 import { defineCommand } from "citty";
 import { BASE_URL_ENV, DEFAULT_MODEL, MODEL_ENV, doctor } from "../../index";
 import { fail, print } from "./shared";

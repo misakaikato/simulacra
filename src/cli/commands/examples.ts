@@ -1,3 +1,8 @@
+// `simulacra examples`: without a name lists the built-in examples with their scenario paths;
+// with a name copies that example directory (scenario, plan, recordings) to --out or ./<name>.
+// `simulacra examples`：不带名字时列出内置示例及其场景路径；带名字时把该示例目录
+//（场景、计划、录制）复制到 --out 或 ./<name>。
+
 import { defineCommand } from "citty";
 import { copyExample, examplePath, listExamples } from "../../index";
 import { fail, print } from "./shared";

@@ -1,3 +1,9 @@
+// `simulacra import-oasis`: turns an OASIS SQLite database into a run directory through the
+// OASIS adapter, computes the requested metric kinds with the default registry and prints the
+// import counts.
+// `simulacra import-oasis`：经 OASIS 适配器把 OASIS SQLite 数据库转成运行目录，
+// 用默认注册表计算所请求的指标种类，并打印导入计数。
+
 import { defineCommand } from "citty";
 import { createDefaultRegistry, importOasis } from "../../index";
 import { fail, print } from "./shared";
