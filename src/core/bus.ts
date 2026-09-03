@@ -1,3 +1,8 @@
+// Event bus: wraps an EventLog so every append is also handed to a subscriber (API streaming,
+// run-registry progress). Only append is intercepted; reads pass straight through.
+// 事件总线：包装 EventLog，使每次 append 同时交给订阅者（API 推流、运行注册表进度）。只拦截 append，
+// 读操作直接透传。
+
 import type { EventLog } from "./protocols";
 import type { BatchEventFilter, EntityId, Event, EventFilter, EventId } from "./types";
 

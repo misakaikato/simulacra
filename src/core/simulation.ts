@@ -1,3 +1,13 @@
+// The tick loop. One tick is: activation event, due callbacks, per executor observe -> decide
+// -> validate or fallback -> resolve, manual calls, one applyEffects with its effect event,
+// after hooks, module steps, measurements, provider audits, then the completeness assertion.
+// Every phase has its own substep, every failure becomes a failure event, and the loop only
+// throws IncompleteTick, which marks a kernel bug.
+// tick 循环。一个 tick 依次是：activation 事件、到期回调、每个执行体的 observe -> decide -> 校验或
+// 回退 -> 解析、手动调用、一次 applyEffects 及其 effect 事件、after 钩子、模块 step、测量、提供者审计，
+// 最后是完成断言。每个阶段占一个 substep，每个失败都写成 failure 事件，循环只会抛出标记内核 bug 的
+// IncompleteTick。
+
 import { join, resolve } from "node:path";
 import type { Logger } from "../logging/logger";
 import { z } from "zod";
@@ -89,6 +99,10 @@ export interface GatewayOptions {
 	readonly onFailure: (failure: LLMFailure) => void;
 }
 
+// Exactly one gateway per run. The factory is injected so core never imports llm/; failures
+// the gateway reports flow back through onFailure as failure events.
+// 每个 run 恰好一个网关。工厂由外部注入，core 因此不 import llm/；网关报告的失败经 onFailure
+// 回流成 failure 事件。
 export type GatewayFactory = (spec: LLMSpec, opts: GatewayOptions) => LLMGateway;
 
 export interface SimulationDeps {
@@ -101,6 +115,10 @@ export interface SimulationDeps {
 	readonly resumeFrom?: CheckpointState;
 }
 
+// boundaryEvents counts ids drawn from the boundary rng before the checkpoint; replaying that
+// many draws on resume realigns boundary event ids with the original run.
+// boundaryEvents 记录检查点之前从边界 rng 抽取的 id 数量；续跑时重放同样多次抽取，边界事件 id
+// 与原始运行对齐。
 export interface ResumePoint {
 	readonly now: LogicalTime;
 	readonly lastEventId: EventId;
@@ -131,10 +149,12 @@ export interface EventFields {
 	readonly provenance?: Provenance;
 	// Boundary steps (questionnaires, interventions) record at the tick boundary without
 	// consuming a sequence number, so a checkpoint can still follow them.
+	// 边界步骤（问卷、干预）记在 tick 边界且不消耗序号，检查点因此仍可紧随其后。
 	readonly atBoundary?: boolean;
 }
 
 // Paths an intervention may change while a run is in flight
+// 干预在运行途中允许修改的路径
 const HOT_PREFIXES: readonly string[] = ["params.", "prompt.", "policy.options."];
 const INTERVENTION_KEY = "intervention";
 const INSTRUCTION_KEY = "instruction";
@@ -174,6 +194,7 @@ interface AgentOutcome {
 
 // Decisions of one batch executor in one tick, folded into a single decision_batch event.
 // The event id is drawn up front so action calls and act effects can name it as their cause.
+// 一个批量执行体在一个 tick 内的决策，折叠成单条 decision_batch 事件。事件 id 预先抽取，动作调用与 act 效果才能以它为 cause。
 interface DecisionBatch {
 	readonly eventId: EventId;
 	readonly executor: string;
@@ -194,6 +215,7 @@ const addCost = (a: Cost, b: Cost): Cost => ({
 });
 
 // Most frequent provenance in the batch; ties go to the one seen first
+// 批次中最常见的来源；并列时取先出现者
 const majorityProvenance = (
 	tally: ReadonlyMap<Decision["provenance"], number>,
 ): Decision["provenance"] => {
@@ -210,6 +232,7 @@ interface ExecutorSlot {
 }
 
 // Shared with the plugin context so plugins that keep `ctx` see the scenario as intervened.
+// 与插件上下文共享，保留 `ctx` 的插件因此能看到干预后的场景。
 interface ScenarioHolder {
 	scenario: Scenario;
 }
@@ -269,6 +292,10 @@ class KernelSimulation implements Simulation {
 	private readonly ctx: PluginContext;
 	private readonly holder: ScenarioHolder;
 	private declared: Scenario;
+	// Event ids come from a per-tick fork inside a tick and from boundaryRng between ticks, so
+	// boundary events keep stable ids across resume however many ticks ran before them.
+	// 事件 id 在 tick 内取自按 tick 派生的 fork，tick 之间取自 boundaryRng，边界事件的 id 因此在续跑后
+	// 保持稳定，与之前跑了多少 tick 无关。
 	private readonly rootRng: Rng;
 	private readonly boundaryRng: Rng;
 	private readonly modules: ReadonlyMap<string, Module>;
@@ -364,6 +391,9 @@ class KernelSimulation implements Simulation {
 		return this.emitAs(this.nextEventId(), init, fields);
 	}
 
+	// Boundary events do not consume a seq: they sit at (tick, 0, n) beside the checkpoint, and
+	// assertComplete ignores substep 0.
+	// 边界事件不消耗 seq：它们与检查点一起位于 (tick, 0, n)，assertComplete 忽略 substep 0。
 	private emitAs(eventId: EventId, init: EventInit, fields: EventFields = {}): Event {
 		if (fields.atBoundary !== true) this.clock.nextSeq();
 		const event = makeEvent(
@@ -383,6 +413,9 @@ class KernelSimulation implements Simulation {
 		return event;
 	}
 
+	// complete needs both: no tick threw IncompleteTick, and every activation was settled as ok
+	// or failed.
+	// complete 需要两个条件同时成立：没有 tick 抛出 IncompleteTick，且每次激活都以 ok 或 failed 结清。
 	integrity(): Integrity {
 		const c = this.counts;
 		return {
@@ -450,6 +483,11 @@ class KernelSimulation implements Simulation {
 		this.log.close();
 	}
 
+	// Module initialisation runs once before tick 0; its module_step events sit at (0,0,0)
+	// without consuming seq, so the tick 0 checkpoint captures the initialised world and replay
+	// skips them through lastEventId.
+	// 模块初始化在 tick 0 之前执行一次；其 module_step 事件位于 (0,0,0) 且不消耗 seq，tick 0 检查点
+	// 因此捕获已初始化的世界，回放靠 lastEventId 跳过它们。
 	async initialize(): Promise<Result<void, FailureInfo>> {
 		if (this.initialized) return ok(undefined);
 		this.initialized = true;
@@ -486,6 +524,11 @@ class KernelSimulation implements Simulation {
 		return ok(undefined);
 	}
 
+	// All randomness of a tick derives from rootRng.fork(tick): policy, executors, modules and
+	// event ids each take a labelled fork, so a tick is reproducible in isolation and resume
+	// needs no rng state.
+	// 一个 tick 的全部随机性都派生自 rootRng.fork(tick)：策略、执行体、模块与事件 id 各取一个带标签的
+	// fork，单个 tick 可独立复现，续跑不需要保存 rng 状态。
 	async step(activationOverride?: Activation): Promise<Result<TickReport, FailureInfo>> {
 		const initialized = await this.initialize();
 		if (!initialized.ok) return initialized;
@@ -516,6 +559,12 @@ class KernelSimulation implements Simulation {
 			await this.runDue();
 
 			const effects: Effect[] = [];
+			// Each executor takes the activated agents of its entity that it owns and that are
+			// not manual. An agent no executor owns becomes a failure rather than a silent skip,
+			// which keeps the completeness assertion honest. Three consecutive whole-batch
+			// failures fail the run; a tick with nothing to decide neither counts nor resets.
+			// 每个执行体取其实体中由它拥有且非 manual 的激活 agent。没有执行体拥有的 agent 记为失败而不是
+			// 静默跳过，完成断言因此可信。连续三次整批失败使 run 失败；无事可决的 tick 既不计数也不清零。
 			const afterQueue: {
 				readonly executor: Executor;
 				readonly decisions: readonly Decision[];
@@ -589,6 +638,10 @@ class KernelSimulation implements Simulation {
 			}
 			this.counts.activated += Object.keys(activation.agents).length;
 
+			// All executor and action effects of the tick land in one applyEffects call, so
+			// same-tick conflicts are settled by merge rules rather than by executor order.
+			// 本 tick 全部执行体与动作的效果在一次 applyEffects 中落地，同 tick 冲突由 merge 规则裁决，
+			// 而不是由执行体顺序决定。
 			const report = applyEffects(this.world, effects, this.clock.now);
 			const effectEvent = this.emit(
 				{ kind: "effect", payload: { effects, rejected: report.rejected } },
@@ -623,6 +676,9 @@ class KernelSimulation implements Simulation {
 			this.measure(tick, activationEvent.eventId);
 			this.auditProviders(activationEvent.eventId, tickRng);
 
+			// The tick batch is committed even when the assertion throws, so the log shows what
+			// happened; IncompleteTick additionally marks integrity incomplete.
+			// 断言抛出时 tick 事务照样提交，日志里能看到发生了什么；IncompleteTick 另外把 integrity 标为不完整。
 			this.assertComplete(tick, activation);
 		} catch (e) {
 			if (e instanceof IncompleteTick) this.incomplete = true;
@@ -666,6 +722,10 @@ class KernelSimulation implements Simulation {
 		}
 	}
 
+	// Module observations merge per agent by key. A pending intervention instruction rides
+	// along under observation.intervention.instruction and is consumed once.
+	// 模块观察按 agent 逐键合并。待投递的干预指令附在 observation.intervention.instruction 下，
+	// 投递一次即消耗。
 	private moduleObservations(ids: readonly EntityId[]): ModuleObservations {
 		const out = new Map<EntityId, JsonObject>();
 		for (const module of this.modules.values()) {
@@ -691,6 +751,11 @@ class KernelSimulation implements Simulation {
 
 	// Boundary steps
 
+	// Questionnaires run at the tick boundary: events carry atBoundary so no seq is consumed,
+	// and agents are routed to the executor that owns them so persona-aware interviews use
+	// the executor's own components.
+	// 问卷在 tick 边界执行：事件带 atBoundary、不消耗 seq；agent 被路由到拥有它的执行体，
+	// 感知 persona 的访谈因此使用执行体自己的组件。
 	async questionnaire(
 		name: string,
 		targets: Selector | undefined,
@@ -761,6 +826,11 @@ class KernelSimulation implements Simulation {
 		});
 	}
 
+	// Interview decisions carry provenance interview. With entersMemory false the observation
+	// and decision events drop agentId so memory components cannot see them, and after() is
+	// skipped; answers still become measurement events with agentId and parent.
+	// 访谈决策的来源为 interview。entersMemory 为 false 时 observation 与 decision 事件不带 agentId，
+	// 记忆组件看不到它们，且跳过 after()；答案仍写成带 agentId 与 parent 的 measurement 事件。
 	private async interview(
 		q: Questionnaire,
 		slot: ExecutorSlot,
@@ -962,6 +1032,12 @@ class KernelSimulation implements Simulation {
 
 	// Hot overrides re-derive the scenario, re-create the policy and any executor whose
 	// options changed, and refuse anything that would alter modules or providers mid-run.
+	// 热覆盖重新派生场景、重建策略与选项发生变化的执行体，拒绝任何会在运行途中改变模块或提供者的覆盖。
+	// The override is applied to the declared (pre-param-resolution) scenario and re-resolved so
+	// $param-driven options follow; the holder is swapped back on any failure so a rejected
+	// override leaves no partial state behind.
+	// 覆盖作用于已声明（参数解析前）的场景并重新解析，$param 驱动的选项随之变化；任何失败都把 holder
+	// 换回原值，被拒绝的覆盖不留下半成品状态。
 	private applyHotOverride(path: string, value: JsonValue, fields: EventFields): void {
 		const reject = (excType: string, message: string): void =>
 			this.recordFailure(
@@ -1036,6 +1112,11 @@ class KernelSimulation implements Simulation {
 		this.logger.info("hot override applied", { path, value });
 	}
 
+	// Whole-batch failure is the union of: observe threw, the provider threw, a wrong result
+	// count, or a non-empty batch with no ok result. Every path still yields exactly one
+	// decision or failure per agent through fallbackAll.
+	// 整批失败是以下情况的并集：observe 抛出、提供者抛出、结果数不符、非空批次全部失败。
+	// 每条路径仍通过 fallbackAll 为每个 agent 恰好产出一条决策或失败。
 	private async runExecutor(
 		slot: ExecutorSlot,
 		ids: readonly EntityId[],
@@ -1089,6 +1170,9 @@ class KernelSimulation implements Simulation {
 			};
 		}
 		const observationEvent = requests[0]?.observationEvent ?? activationEvent;
+		// Agents observe returned no request for (no available actions, say) count as failed here;
+		// observe already recorded their failure event.
+		// observe 没有为之生成请求的 agent（例如没有可用动作）在此计为 failed；observe 已经写过它们的 failure 事件。
 		const requested = new Set(requests.map((r) => r.agentId));
 		this.counts.failed += ids.filter((id) => !requested.has(id)).length;
 
@@ -1184,6 +1268,9 @@ class KernelSimulation implements Simulation {
 				effects.push(...(await this.resolve(outcome.call, tickRng, label)));
 		}
 		this.closeBatch(batch, observationEvent);
+		// Effects from a batch executor's act are stamped with the decision_batch id so inspect can
+		// find the ones that touch a given agent.
+		// 批量执行体 act 产出的效果盖上 decision_batch 的 id，inspect 才能找到触及某个 agent 的效果。
 		const executorEffects = await this.executorAct(
 			executor,
 			decisions,
@@ -1203,6 +1290,9 @@ class KernelSimulation implements Simulation {
 		};
 	}
 
+	// The batch event id is drawn when the batch opens so causes can name it, but the event is
+	// written only once every member is known; an empty batch writes nothing.
+	// 批量事件的 id 在开批时抽取，效果才能以它为 cause，但事件要等全部成员确定后才写；空批不写。
 	private openBatch(executor: Executor, provider: DecisionProvider): DecisionBatch | undefined {
 		if (executor.batchEvents !== true) return undefined;
 		return {
@@ -1245,6 +1335,7 @@ class KernelSimulation implements Simulation {
 
 	// Per-agent decision event, or an entry in the executor's decision_batch; returns the
 	// event id an action call names as its cause.
+	// 逐 agent 的 decision 事件，或执行体 decision_batch 里的一条记录；返回动作调用作为 cause 的事件 id。
 	private recordDecision(
 		decision: Decision,
 		providerName: string,
@@ -1287,6 +1378,9 @@ class KernelSimulation implements Simulation {
 		}
 	}
 
+	// A validation failure counts as a parse failure: the provider produced something the action
+	// space cannot honour, and the agent is given the fallback action.
+	// 校验失败计为解析失败：提供者产出了动作空间无法执行的东西，该 agent 改用 fallback 动作。
 	private accept(
 		decision: Decision,
 		request: DecisionRequest,
@@ -1335,6 +1429,7 @@ class KernelSimulation implements Simulation {
 
 	// Executors that resolve their own actions (batch transitions) bypass the action registry:
 	// the decision only has to name an action from the request's action space.
+	// 自行解析动作的执行体（批量转移）绕过动作注册表：决策只需指名请求动作空间内的一个动作。
 	private acceptOwn(
 		decision: Decision,
 		request: DecisionRequest,
@@ -1385,6 +1480,10 @@ class KernelSimulation implements Simulation {
 		);
 	}
 
+	// The fallback decision has provenance rule and parseOk false and is counted failed even
+	// though it produces a decision event; that is what keeps activated === ok + failed.
+	// 回退决策的来源为 rule、parseOk 为 false，即使产生了 decision 事件也计为 failed；
+	// activated === ok + failed 靠这一点成立。
 	private fallback(
 		agentId: EntityId,
 		parent: EventId,
@@ -1523,6 +1622,10 @@ class KernelSimulation implements Simulation {
 		return this.resolve({ ...validated.value, cause: event.eventId }, tickRng, MANUAL);
 	}
 
+	// Each call gets an rng forked from executor, action and cause event id, so two agents
+	// resolving the same action in one tick never draw the same entity ids.
+	// 每次调用的 rng 由执行体、动作与 cause 事件 id 派生，同 tick 内解析同一动作的两个 agent
+	// 永远不会抽到相同的实体 id。
 	private async resolve(
 		call: ActionCall,
 		tickRng: Rng,
@@ -1575,6 +1678,9 @@ class KernelSimulation implements Simulation {
 		return undefined;
 	}
 
+	// concurrencySafe modules step under Promise.all, but their effects are applied in
+	// declaration order afterwards, so the resulting world equals a serial run.
+	// concurrencySafe 的模块在 Promise.all 下 step，但效果随后按声明顺序应用，得到的世界与串行运行相同。
 	private async runModules(
 		tickRng: Rng,
 		activationEvent: EventId,
@@ -1627,6 +1733,10 @@ class KernelSimulation implements Simulation {
 		}
 	}
 
+	// The module_step event is assembled by hand rather than through emit() because its id must
+	// exist before the effects are stamped and applied; advanceSeq is false only for initialize.
+	// module_step 事件手工组装而不经 emit()，因为其 id 必须先于效果盖戳与应用而存在；
+	// advanceSeq 只在 initialize 时为 false。
 	private applyModuleEffects(
 		slot: ModuleSlot,
 		effects: readonly Effect[],
@@ -1671,6 +1781,9 @@ class KernelSimulation implements Simulation {
 		);
 	}
 
+	// An instrument fires when tick % every === 0; the last value of each is what
+	// RunResult.metrics reports.
+	// 仪器在 tick % every === 0 时采集；每个仪器的最后一个值就是 RunResult.metrics 报告的值。
 	private measure(tick: number, activationEvent: EventId): void {
 		for (const instrument of this.instruments) {
 			if (tick % instrument.every !== 0) continue;
@@ -1702,6 +1815,7 @@ class KernelSimulation implements Simulation {
 	}
 
 	// Providers that decided this tick, followed by the downstream chains they were assembled from
+	// 本 tick 参与决策的提供者，以及装配它们时用到的下游链
 	private participants(): readonly string[] {
 		const out: string[] = [];
 		const visit = (name: string): void => {
@@ -1713,6 +1827,10 @@ class KernelSimulation implements Simulation {
 		return out;
 	}
 
+	// Provider audit numbers become measurement events under instrument provider:<name> and
+	// metrics provider.<name>.<key>; only finite numbers are kept.
+	// 提供者审计的数值写成 instrument 为 provider:<name> 的 measurement 事件，并以
+	// provider.<name>.<key> 进入指标；只保留有限数值。
 	private auditProviders(activationEvent: EventId, tickRng: Rng): void {
 		const graph = this.graph();
 		const ctx = {
@@ -1762,6 +1880,7 @@ class KernelSimulation implements Simulation {
 
 	// Boundary steps record at substep 0 before the tick starts; only in-tick events count.
 	// A decision is a per-agent decision event or one entry in a decision_batch.
+	// 边界步骤记在 tick 开始前的 substep 0，只统计 tick 内的事件。一条决策指逐 agent 的 decision 事件或 decision_batch 里的一条记录。
 	private assertComplete(tick: number, activation: Activation): void {
 		const decisions = new Map<string, number>();
 		const failures = new Set<string>();
@@ -1800,6 +1919,8 @@ class KernelSimulation implements Simulation {
 			);
 	}
 
+	// Every failure event is mirrored as an error log line; provenance defaults to kernel.
+	// 每个 failure 事件同时写一条 error 日志；来源默认为 kernel。
 	private recordFailure(
 		payload: {
 			readonly stage: string;
@@ -1855,6 +1976,9 @@ const providerPluginError = (slot: string, e: ProviderResolveError): PluginError
 	}
 };
 
+// Relative population sources resolve against baseDir; the recording directory defaults
+// into the run directory so a record-mode run is self-contained.
+// 相对的人口数据源按 baseDir 解析；录制目录默认落在 run 目录内，record 模式的 run 自成一体。
 const resolvedScenario = (scenario: Scenario, deps: SimulationDeps): Scenario => {
 	const baseDir = deps.baseDir ?? process.cwd();
 	const source = scenario.population.source;
@@ -1884,6 +2008,9 @@ export const createSimulation = (
 	const resumeFrom = deps.resumeFrom;
 	const world = resumeFrom?.world ?? createWorld();
 	const rootRng = rngFromSeed(effective.seed, effective.seedPath);
+	// The gateway is built before the simulation exists; the sink is rebound after construction
+	// so gateway failures always land as failure events once the run is live.
+	// 网关先于模拟对象创建；构造完成后再重新绑定 sink，run 开始后网关失败总能落成 failure 事件。
 	const failureSink: { handle: (failure: LLMFailure) => void } = { handle: () => {} };
 	let gateway: LLMGateway;
 	try {
@@ -1897,7 +2024,11 @@ export const createSimulation = (
 	const providers = new Map<string, DecisionProvider>();
 	const constructing: string[] = [];
 	// Composite providers resolve their downstreams while being constructed; the edges feed audit()
+	// 组合提供者在构造过程中解析下游；这些边供 audit() 使用
 	const downstreams = new Map<string, Set<string>>();
+	// Providers are memoised by name and built on demand; a name already on the constructing
+	// stack is a cycle.
+	// 提供者按名字记忆化并按需构造；名字已在构造栈上即为循环引用。
 	const resolveProvider = (name: string): Result<DecisionProvider, ProviderResolveError> => {
 		const requester = constructing[constructing.length - 1];
 		if (requester !== undefined) {
@@ -1959,6 +2090,9 @@ export const createSimulation = (
 		}
 		modules.set(module.name, module);
 	}
+	// requiresModules is checked after every module has loaded so the error lists all missing
+	// modules at once.
+	// requiresModules 在全部模块装载后才检查，错误信息一次列出所有缺失的模块。
 	for (const name of registry.actions.names()) {
 		const def = registry.actions.get(name);
 		const missing = (def?.requiresModules ?? []).filter((m) => !modules.has(m));
@@ -2047,6 +2181,9 @@ export const createSimulation = (
 		instruments.push({ name, kind: spec.kind, every: spec.every ?? 1, metric: created.value });
 	}
 
+	// On resume the world came from the checkpoint and the population was not rebuilt; plugin
+	// state is restored only after every plugin exists so composites see their downstreams.
+	// 续跑时世界来自检查点、人口不重建；插件状态等全部插件都存在后才恢复，组合提供者能看到它们的下游。
 	if (resumeFrom !== undefined) {
 		for (const [name, module] of modules) {
 			const state = resumeFrom.modules[name];

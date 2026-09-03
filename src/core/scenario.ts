@@ -1,3 +1,9 @@
+// Scenario parsing and pure transforms: YAML to Scenario through the zod schema, replication
+// spawning by seedPath, dotted-path overrides, and scenarioHash, which excludes replicationId
+// and seedPath so every replication of a condition shares one hash.
+// Scenario 的解析与纯变换：YAML 经 zod schema 变成 Scenario、按 seedPath 派生复制、点路径覆盖，以及
+// 排除 replicationId 与 seedPath 的 scenarioHash，同一条件的所有复制共享一个哈希。
+
 import { resolve } from "node:path";
 import { parse as parseYaml } from "yaml";
 import type { z } from "zod";
@@ -30,6 +36,7 @@ export const resolveScenarioPlugins = (scenario: Scenario, baseDir: string): Sce
 		: { ...scenario, plugins: scenario.plugins.map((p) => resolve(baseDir, p)) };
 
 // Every path a scenario file declares relative to itself: plugins and the LLM recording directory
+// 场景文件相对自身声明的全部路径：插件与 LLM 录制目录
 export const resolveScenarioPaths = (scenario: Scenario, baseDir: string): Scenario => {
 	const withPlugins = resolveScenarioPlugins(scenario, baseDir);
 	const recordDir = scenario.llm.recordDir;
@@ -38,6 +45,9 @@ export const resolveScenarioPaths = (scenario: Scenario, baseDir: string): Scena
 		: { ...withPlugins, llm: { ...withPlugins.llm, recordDir: resolve(baseDir, recordDir) } };
 };
 
+// Replication i appends i to the seed path and leaves the seed alone, so replications differ
+// only in rng derivation and are distinct from each other and from the base.
+// 第 i 个复制把 i 追加到种子路径而不改种子，复制之间只在 rng 派生上不同，且与基线互不相同。
 export const spawnReplications = (s: Scenario, n: number): readonly Scenario[] =>
 	Array.from({ length: n }, (_, i) => ({
 		...s,
@@ -79,6 +89,9 @@ const cloneWith = (c: Container, key: string, value: unknown): Container => {
 	return { ...c, [key]: value };
 };
 
+// A dotted path is tried as nested keys first and then as one flat key, so a param literally
+// named "feed.size" is reachable too.
+// 点路径先按嵌套键尝试，再按单个扁平键尝试，字面名为 "feed.size" 的参数也能命中。
 const setPath = (
 	root: Container,
 	segments: readonly string[],
@@ -99,6 +112,10 @@ const setPath = (
 	return hasKey(root, flat) ? cloneWith(root, flat, value) : undefined;
 };
 
+// Root fields first, params second; the result is re-validated so an override that breaks
+// the schema is reported as InvalidOverride now rather than surfacing at run time.
+// 先试 Scenario 根字段，再试 params；结果重新过 schema 校验，破坏 schema 的覆盖立即报
+// InvalidOverride，不会拖到运行时才暴露。
 export const overrideScenario = (
 	s: Scenario,
 	dotted: string,

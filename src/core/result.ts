@@ -1,3 +1,7 @@
+// Result helpers: constructors, combinators, collect (first error wins) and partition.
+// Business failures are values; exceptions are reserved for kernel bugs.
+// Result 辅助函数：构造器、组合子、collect（首个错误即返回）与 partition。业务失败是值；异常只留给内核 bug。
+
 import type { Result } from "./types";
 
 export const ok = <T>(value: T): Result<T, never> => ({ ok: true, value });
@@ -22,6 +26,9 @@ export const andThen = <T, U, E, F>(
 
 export const unwrapOr = <T, E>(r: Result<T, E>, fallback: T): T => (r.ok ? r.value : fallback);
 
+// collect stops at the first error so callers get one ordered cause; partition keeps both
+// sides for reporting.
+// collect 遇到第一个错误就停止，调用方得到唯一且有序的原因；partition 保留两边用于汇报。
 export const collect = <T, E>(rs: readonly Result<T, E>[]): Result<readonly T[], E> => {
 	const values: T[] = [];
 	for (const r of rs) {

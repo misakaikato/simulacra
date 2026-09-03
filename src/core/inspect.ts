@@ -1,3 +1,9 @@
+// Agent-centric view over the event log behind `simulacra inspect` and the MCP trace tool:
+// anchor on the agent's decision (or failure) at a tick, walk the causal chain, and collect
+// the prompt text, effects and failures that belong to it.
+// `simulacra inspect` 与 MCP 追踪工具背后以 agent 为中心的事件日志视图：以该 agent 在某 tick 的决策
+//（或失败）为锚点，沿因果链遍历，收集属于它的 prompt 文本、效果与失败。
+
 import { compareEvents } from "./events";
 import type { EventLog } from "./protocols";
 import { err, ok } from "./result";
@@ -14,6 +20,7 @@ export interface InspectQuery {
 
 // Agents of batch executors have no per-agent observation or decision events; the batch
 // events that list them fill observationBatch and decisionBatch instead.
+// 批量执行体的 agent 没有逐 agent 的 observation 与 decision 事件；列出它们的批量事件填入 observationBatch 与 decisionBatch。
 export interface InspectResult {
 	readonly agentId: EntityId;
 	readonly tick: number;
@@ -32,6 +39,10 @@ const touches = (effect: Effect, agentId: EntityId): boolean =>
 		? effect.ids.includes(agentId)
 		: effect.op !== "envSet" && effect.id === agentId;
 
+// The anchor is the latest decision at the tick, per-agent or batch; a failure anchors only
+// when no decision exists, so a fallback decision still anchors its chain.
+// 锚点是该 tick 最晚的决策，逐 agent 或批量皆可；只有不存在决策时才以 failure 为锚，
+// 回退产生的决策因此仍能锚定它的因果链。
 const anchorOf = (log: EventLog, query: InspectQuery): Result<Event, string> => {
 	if (query.eventId !== undefined) {
 		const [found] = log.chain(query.eventId).filter((e) => e.eventId === query.eventId);
@@ -69,6 +80,7 @@ export const inspectEvents = (
 	);
 	// Batch failures hang off the observation batch, one per agent, so the chain of the
 	// decision batch does not reach them; the agent's own failures at the tick do.
+	// 批量失败挂在 observation batch 下、每 agent 一条，decision batch 的因果链够不到它们；改取该 agent 在本 tick 的失败事件。
 	const failures =
 		decisionBatch === undefined
 			? chain.filter((e): e is EventOf<"failure"> => e.kind === "failure")
@@ -127,6 +139,7 @@ export const describeEffect = (e: Effect): string => {
 };
 
 // The agent's own value inside a column-wide write
+// 整列写入中属于该 agent 的那个值
 const describeEffectFor = (e: Effect, agentId: EntityId): string => {
 	const text = describeEffect(e);
 	if (e.op !== "setColumn") return text;

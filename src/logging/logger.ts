@@ -1,3 +1,9 @@
+// Structured logger: a level filter, child contexts merged into every record, and span(),
+// which records start, end with duration, and error with the exception before rethrowing.
+// Records go to sinks; the logger itself formats nothing.
+// 结构化日志器：级别过滤、合并进每条记录的子上下文，以及 span()：记录开始、带耗时的结束，
+// 以及带异常的错误后重新抛出。记录交给 sink；日志器本身不做格式化。
+
 import type { JsonObject } from "../core/types";
 
 export type LogLevel = "trace" | "debug" | "info" | "warn" | "error";
@@ -9,11 +15,16 @@ const rank = (level: LogLevel): number => LOG_LEVELS.indexOf(level);
 export const isLogLevel = (s: string): s is LogLevel =>
 	(LOG_LEVELS as readonly string[]).includes(s);
 
+// SIMULACRA_LOG picks the level for every entry point; an unknown value falls back rather
+// than failing startup over a typo.
+// SIMULACRA_LOG 为所有入口选定级别；无法识别的值退回默认，不会因为一个拼写错误而启动失败。
 export const levelFromEnv = (
 	value = process.env.SIMULACRA_LOG,
 	fallback: LogLevel = "info",
 ): LogLevel => (value !== undefined && isLogLevel(value) ? value : fallback);
 
+// ctx is the accumulated child context (runId, tick, component); data is per-call payload.
+// ctx 是逐层累积的子上下文（runId、tick、component）；data 是单次调用附带的负载。
 export interface LogRecord {
 	readonly ts: string;
 	readonly level: LogLevel;
@@ -86,6 +97,9 @@ class SinkLogger implements Logger {
 		this.log("error", msg, data);
 	}
 
+	// span observes and never swallows: debug at start and end, error with the exception on
+	// throw, then the exception continues to the caller.
+	// span 只观察、从不吞掉：开始与结束记 debug，抛出时记带异常的 error，然后异常继续向调用方传播。
 	async span<T>(name: string, fn: () => Promise<T>): Promise<T> {
 		const start = performance.now();
 		this.debug(name, { span: "start" });
@@ -110,4 +124,6 @@ export const createLogger = (opts: {
 	readonly ctx?: JsonObject;
 }): Logger => new SinkLogger(opts.level, opts.sinks, opts.ctx ?? {});
 
+// A logger with no sinks for library callers that pass none; nothing is written anywhere.
+// 供未传日志器的库调用方使用的无 sink 日志器；不会向任何地方写入。
 export const silentLogger: Logger = createLogger({ level: "error", sinks: [] });

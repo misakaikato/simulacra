@@ -1,7 +1,16 @@
+// Log sinks: jsonlSink appends one JSON object per line to a file with ctx keys flattened
+// beside ts, level and msg; prettySink renders a human-readable line to a WritableStream or
+// a callback; memorySink keeps records for tests.
+// 日志 sink：jsonlSink 向文件追加每行一个 JSON 对象，ctx 的键与 ts、level、msg 平铺在一起；
+// prettySink 向 WritableStream 或回调输出人读的一行；memorySink 为测试保留记录。
+
 import { closeSync, mkdirSync, openSync, writeSync } from "node:fs";
 import { dirname } from "node:path";
 import type { LogLevel, LogRecord, LogSink } from "./logger";
 
+// Context keys that collide with the fixed fields are dropped rather than overwriting them,
+// so ts, level, msg and data always mean what a reader expects.
+// 与固定字段同名的上下文键被丢弃而不是覆盖，ts、level、msg 与 data 的含义始终符合读者预期。
 const RESERVED = new Set(["ts", "level", "msg", "data"]);
 
 export const formatJsonl = (record: LogRecord): string => {
@@ -32,6 +41,8 @@ export const formatPretty = (record: LogRecord, color = false): string => {
 	return `${record.ts} ${head} ${ctx.length > 0 ? `[${ctx}] ` : ""}${record.msg}${data}`;
 };
 
+// Writes are synchronous so the last records before a crash reach the file.
+// 同步写入，崩溃前的最后几条记录能落到文件里。
 export const jsonlSink = (path: string): LogSink => {
 	mkdirSync(dirname(path), { recursive: true });
 	const fd = openSync(path, "a");
@@ -62,6 +73,9 @@ export const prettySink = (
 			close() {},
 		};
 	}
+	// Stream writes are chained on one promise so lines keep their order although write() is
+	// synchronous for callers; close waits for the chain to drain.
+	// 流写入串在同一个 promise 链上，write() 对调用方是同步的但行序得以保持；close 等链排空。
 	const writer = target.getWriter();
 	let pending: Promise<void> = Promise.resolve();
 	return {
