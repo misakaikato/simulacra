@@ -1,3 +1,9 @@
+// Archetype provider: groups requests by the values of the `groupOn` persona columns, sends one
+// synthetic representative per group (nArch times) to the downstream and broadcasts the majority
+// action to every member; the per-prototype votes become the `soft` distribution.
+// 原型提供者：按 `groupOn` 人设列的取值组合分组，每组合成一个代表请求（重复 nArch 次）
+// 交给下游，多数动作广播给全体成员；各次原型的投票构成 `soft` 分布。
+
 import { z } from "zod";
 import { makeEvent } from "../core/events";
 import { FAILURE_TYPES } from "../core/failures";
@@ -58,6 +64,12 @@ interface Group {
 	readonly members: readonly DecisionRequest[];
 }
 
+// Groups are keyed by the canonical JSON of the groupOn values and sorted by key, so group
+// order (and therefore rng consumption) is independent of request order. One request missing a
+// column rejects the whole batch: silently mixing grouped and ungrouped agents would bias the
+// broadcast.
+// 组键是 groupOn 取值的规范化 JSON，并按键排序，分组顺序（进而随机数消耗）与请求顺序无关。
+// 任一请求缺列则整批拒绝：悄悄混合分组与未分组的 agent 会让广播产生偏差。
 export const groupRequests = (
 	requests: readonly DecisionRequest[],
 	groupOn: readonly string[],
@@ -99,6 +111,7 @@ export const publicPersonaOf = (
 };
 
 // Numbers average, booleans take the majority, everything else keeps the first member's value.
+// 数值取平均，布尔取多数，其余保留首个成员的值。
 export const aggregateObservations = (observations: readonly JsonObject[]): JsonObject => {
 	const first = observations[0];
 	if (first === undefined) return {};
@@ -133,6 +146,7 @@ export interface Vote {
 }
 
 // Majority action over the prototype decisions; ties break on the action name.
+// 原型决策的多数动作；平票按动作名裁决。
 export const majorityVote = (decisions: readonly Decision[]): Vote | undefined => {
 	if (decisions.length === 0) return undefined;
 	const counts = new Map<string, number>();
@@ -165,6 +179,10 @@ class ArchetypeDecisionProvider implements DecisionProvider {
 		this.logger = logger.child({ component: `provider:${options.name}` });
 	}
 
+	// Each of the nArch passes gets its own seed path suffix so downstream randomness differs per
+	// prototype; downstream cost is charged to the group's first member only (appendix H).
+	// nArch 次调用各带自己的种子路径后缀，下游随机性逐原型不同；
+	// 下游成本只记在组内首个成员上（附录 H）。
 	async decide(
 		requests: readonly DecisionRequest[],
 		ctx: RoundContext,
@@ -287,6 +305,7 @@ class ArchetypeDecisionProvider implements DecisionProvider {
 
 	// One synthetic request stands for the whole group; its observation event links back to
 	// every member observation and gives each prototype call its own nonce.
+	// 一个合成请求代表整个组；其观察事件回链到每个成员的观察，并给每次原型调用独立的 nonce。
 	private representative(group: Group, k: number, ctx: RoundContext, rng: Rng): DecisionRequest {
 		const first = group.members[0];
 		if (first === undefined) throw new RangeError("empty archetype group");

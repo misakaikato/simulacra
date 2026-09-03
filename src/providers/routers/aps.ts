@@ -1,3 +1,12 @@
+// Adaptive prototype sampling router: splits agents into a robust-z tail (always queried) and
+// k-means layers; each round a layer-weighted budget of prototypes goes downstream, the rest are
+// interpolated from the nearest queried prototypes, and a stratified shadow audit corrects the
+// reported action distribution and updates the per-layer residual that steers the next budget.
+// Defaults are tuned for N >= 5000; smaller runs must lower alphaB and gamma (appendix H).
+// 自适应原型采样路由：把 agent 分成稳健 z 分数的尾部（始终查询）与 k-means 分层；每轮按层权重
+// 分配原型预算交给下游，其余由最近的已查询原型插值，分层影子审计修正上报的动作分布并更新
+// 各层残差以引导下一轮预算。默认参数面向 N ≥ 5000，小 N 必须调低 alphaB 与 gamma（附录 H）。
+
 import { z } from "zod";
 import { FAILURE_TYPES } from "../../core/failures";
 import type { DecisionProvider, Rng } from "../../core/protocols";
@@ -17,6 +26,12 @@ import type { Logger } from "../../logging/logger";
 
 export const APS_KIND = "aps";
 
+// Nb and alphaB anchor the core budget (alpha = alphaB * sqrt(Nb / n), floored at alphaMin); Mb
+// caps the layers; lambda, eta and zeta smooth the residual; gamma sizes the audit; kappa and
+// tau govern interpolation and budget weighting; tailFraction is the always-queried share.
+// Nb 与 alphaB 锚定核心预算（alpha = alphaB * sqrt(Nb / n)，下限 alphaMin）；Mb 限制层数；
+// lambda、eta、zeta 平滑残差；gamma 决定审计规模；kappa 与 tau 管插值与预算权重；
+// tailFraction 是始终查询的尾部占比。
 export const ApsOptionsSchema = z.object({
 	downstream: z.string().min(1),
 	Nb: z.number().int().positive().default(5000),
@@ -96,6 +111,7 @@ export const euclidean = (a: readonly number[], b: readonly number[]): number =>
 };
 
 // Tail score per point: L2 norm of the per-dimension robust z-score (median / MAD).
+// 每个点的尾部分数：逐维稳健 z 分数（中位数 / MAD）的 L2 范数。
 export const tailScores = (points: readonly (readonly number[])[]): readonly number[] => {
 	const first = points[0];
 	if (first === undefined) return [];
@@ -135,6 +151,10 @@ export const nearestIndex = (
 	return best;
 };
 
+// Mini-batch k-means with a per-centroid step 1 / count; the initial centroids are a seeded
+// shuffle of the points so layers are reproducible across runs.
+// 小批量 k-means，每个质心的步长为 1 / count；初始质心是点集的带种子洗牌，
+// 分层跨运行可复现。
 export const miniBatchKMeans = (
 	points: readonly (readonly number[])[],
 	k: number,
@@ -165,6 +185,7 @@ export const miniBatchKMeans = (
 };
 
 // Largest-remainder apportionment of `total` over `weights`, each share capped by `caps`.
+// 按 `weights` 用最大余数法分配 `total`，每份不超过 `caps`。
 export const apportion = (
 	total: number,
 	weights: readonly number[],
@@ -193,6 +214,7 @@ export const apportion = (
 		remaining -= 1;
 	}
 	// Every layer that can take a share gets at least `minimum`, taken from the largest shares.
+	// 每个能接收份额的层至少拿到 `minimum`，从最大的份额里匀出。
 	for (let i = 0; i < n; i += 1) {
 		let need = Math.min(minimum, capOf(i)) - at(i);
 		while (need > 0) {
@@ -208,6 +230,10 @@ export const apportion = (
 	return out;
 };
 
+// Euclidean projection onto the probability simplex: the Horvitz-Thompson correction can push
+// an estimate below 0 or the total away from 1, and the report must stay a distribution.
+// 向概率单纯形做欧氏投影：Horvitz-Thompson 修正可能把估计压到 0 以下或让总和偏离 1，
+// 而报告必须仍是一个分布。
 export const projectToSimplex = (
 	values: Readonly<Record<string, number>>,
 ): Readonly<Record<string, number>> => {
@@ -253,6 +279,7 @@ const argmaxAction = (h: Readonly<Record<string, number>>): string | undefined =
 };
 
 // Inverse-distance weighted soft label from the kappa nearest queried prototypes.
+// 由最近的 kappa 个已查询原型按距离倒数加权得到的软标签。
 export const interpolate = (
 	features: readonly number[],
 	support: readonly Support[],
@@ -381,6 +408,7 @@ class ApsDecisionProvider implements DecisionProvider {
 	}
 
 	// Tail set and k-means layers are built once, from the first round's features.
+	// 尾部集合与 k-means 分层只在第一轮按其特征构建一次。
 	private preprocess(
 		requests: readonly DecisionRequest[],
 		valid: readonly number[],
@@ -404,6 +432,8 @@ class ApsDecisionProvider implements DecisionProvider {
 			return id === undefined || !this.tail.has(id);
 		});
 		const n = valid.length;
+		// Layer count scales as Mb * sqrt(n / Nb), so smaller populations get fewer, larger layers.
+		// 层数按 Mb * sqrt(n / Nb) 缩放，人口越小层越少、每层越大。
 		const layers = Math.max(
 			1,
 			Math.min(
@@ -438,6 +468,7 @@ class ApsDecisionProvider implements DecisionProvider {
 		const n = valid.length;
 
 		// Layer membership for this round
+		// 本轮的分层归属
 		const layerOf = new Map<number, number>();
 		const tailIndices: number[] = [];
 		const members: number[][] = Array.from({ length: layerCount }, () => []);
@@ -454,6 +485,7 @@ class ApsDecisionProvider implements DecisionProvider {
 		}
 
 		// Core budget across layers, proportional to |C_m| * sqrt(R_m + tau)
+		// 核心预算按 |C_m| * sqrt(R_m + tau) 分配到各层
 		const alpha = Math.max(o.alphaMin, o.alphaB * Math.sqrt(o.Nb / n));
 		const coreSize = members.reduce((a, m) => a + m.length, 0);
 		const budget = Math.min(coreSize, Math.ceil(alpha * n));
@@ -476,6 +508,7 @@ class ApsDecisionProvider implements DecisionProvider {
 		});
 
 		// Shadow audit: stratified sample of non-prototype agents, labels only correct the report
+		// 影子审计：对非原型 agent 分层抽样，其标签只用于修正报告
 		const eligible = members.map((m) => m.filter((i) => !prototypes.has(i)));
 		const auditBudget = Math.max(
 			o.auditMin,
@@ -502,6 +535,7 @@ class ApsDecisionProvider implements DecisionProvider {
 		});
 
 		// One downstream batch: tail, prototypes, audit samples
+		// 一次下游批调用：尾部、原型、审计样本
 		const queried = [
 			...tailIndices,
 			...[...prototypes].sort((a, b) => a - b),
@@ -523,6 +557,7 @@ class ApsDecisionProvider implements DecisionProvider {
 		});
 
 		// Supports per layer from queried prototypes
+		// 由已查询原型构成的各层支撑集
 		const supportByLayer: Support[][] = Array.from({ length: layerCount }, () => []);
 		const allSupport: Support[] = [];
 		for (const i of prototypes) {
@@ -534,6 +569,7 @@ class ApsDecisionProvider implements DecisionProvider {
 		}
 
 		// Hard decisions and soft labels
+		// 硬决策与软标签
 		const soft = new Map<number, Readonly<Record<string, number>>>();
 		const hard = new Map<number, string>();
 		const setQueried = (i: number): void => {
@@ -577,6 +613,10 @@ class ApsDecisionProvider implements DecisionProvider {
 				});
 				continue;
 			}
+			// Interpolation prefers the agent's own layer and falls back to all prototypes; args
+			// are copied from a queried decision with the same action so they stay schema-valid.
+			// 插值优先用 agent 所在层，缺则退到全部原型；参数从同动作的已查询决策复制，
+			// 保持 schema 合法。
 			const template =
 				local.find((s) => s.decision.action === action)?.decision ??
 				allSupport.find((s) => s.decision.action === action)?.decision ??
@@ -595,6 +635,7 @@ class ApsDecisionProvider implements DecisionProvider {
 		}
 
 		// Report: mean soft label plus the Horvitz-Thompson correction from audited labels
+		// 报告：软标签均值加上审计标签的 Horvitz-Thompson 修正
 		const actions = new Set<string>();
 		for (const h of soft.values()) for (const a of Object.keys(h)) actions.add(a);
 		for (const i of audited.keys()) {
@@ -625,6 +666,11 @@ class ApsDecisionProvider implements DecisionProvider {
 		}
 		const mean = (xs: readonly number[]): number =>
 			xs.length === 0 ? 0 : xs.reduce((a, b) => a + b, 0) / xs.length;
+		// Per-layer residual is an exponential moving average: lambda keeps the old value, eta
+		// weights the mismatch rate, zeta the squared soft-label error; a layer with no audit
+		// sample this round keeps its residual.
+		// 各层残差是指数滑动平均：lambda 保留旧值，eta 加权错配率，zeta 加权软标签平方误差；
+		// 本轮没有审计样本的层保持残差不变。
 		for (let k = 0; k < layerCount; k += 1) {
 			const m = mismatch.get(k);
 			const v = residualVar.get(k);
