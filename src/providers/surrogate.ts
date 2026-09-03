@@ -1,3 +1,9 @@
+// Surrogate provider: a multinomial logistic (softmax) regression fitted on a trace of
+// (features, action) pairs, then used to decide from `features` alone at zero cost. Hand-written
+// so the fit is deterministic under the derived rng and needs no dependency.
+// 代理提供者：在（特征，动作）轨迹上拟合多项逻辑（softmax）回归，之后只凭 `features`
+// 零成本决策。自写实现，拟合在派生 rng 下确定且不引入依赖。
+
 import { z } from "zod";
 import { FAILURE_TYPES } from "../core/failures";
 import type { DecisionProvider, Rng } from "../core/protocols";
@@ -62,6 +68,8 @@ export const softmax = (logits: readonly number[]): readonly number[] => {
 	return exps.map((e) => e / total);
 };
 
+// The bias sits in the last column of each weight row, hence the row[features.length] term.
+// 偏置放在每行权重的最后一列，所以先取 row[features.length]。
 export const logitsOf = (model: SoftmaxModel, features: readonly number[]): readonly number[] =>
 	model.weights.map((row) => {
 		let z = row[features.length] ?? 0;
@@ -76,6 +84,7 @@ export const predictProbabilities = (
 
 // Full-batch gradient descent on the multinomial logistic loss with an L2 penalty on the
 // non-bias weights. Initial weights come from the derived rng so the fit is reproducible.
+// 多项逻辑损失上的全批量梯度下降，非偏置权重带 L2 惩罚。初始权重取自派生 rng，拟合可复现。
 export const fitSoftmax = (
 	samples: readonly { readonly features: readonly number[]; readonly action: string }[],
 	options: Pick<SurrogateProviderOptions, "iterations" | "learningRate" | "l2">,
@@ -90,6 +99,10 @@ export const fitSoftmax = (
 	const index = new Map(actions.map((a, i) => [a, i] as const));
 	const weights = actions.map(() => Array.from({ length: dims + 1 }, () => rng.normal(0, 0.01)));
 	const n = usable.length;
+	// Cross-entropy gradient per sample is (p_k - 1[k = target]) * x (and the same delta for the
+	// bias); dividing by n keeps the learning rate independent of trace size.
+	// 每个样本的交叉熵梯度是 (p_k - 1[k = target]) * x（偏置用同一个 delta）；
+	// 除以 n 让学习率与轨迹大小无关。
 	for (let it = 0; it < options.iterations; it += 1) {
 		const grad = actions.map(() => new Array<number>(dims + 1).fill(0));
 		for (const sample of usable) {
@@ -188,6 +201,11 @@ class SurrogateDecisionProvider implements DecisionProvider {
 		return this.model;
 	}
 
+	// `soft` reports every fitted class, but the hard choice is restricted to the request's action
+	// space so a model fitted on an older action set never emits something the executor cannot
+	// resolve.
+	// `soft` 报告全部拟合类别，硬决策只在请求的动作空间内选，
+	// 在旧动作集上拟合的模型不会给出执行体无法解析的动作。
 	private decideOne(req: DecisionRequest): Result<Decision, ProviderFailure> {
 		const model = this.model;
 		if (model === undefined)

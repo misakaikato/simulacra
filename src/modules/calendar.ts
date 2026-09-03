@@ -1,3 +1,7 @@
+// Calendar module: publishes the scheduled event for the coming tick into the environment under
+// a single key, so prompts can mention "what is happening today" without a table or an action.
+// 日历模块：把下一 tick 的预定事件以单个键写进环境，prompt 无需表或动作就能提到"今天发生了什么"。
+
 import { z } from "zod";
 import { ZERO_EVENT_ID } from "../core/ids";
 import type {
@@ -41,6 +45,10 @@ class CalendarModule implements Module {
 		return [];
 	}
 
+	// initialize writes tick 0's entry and step writes tick t+1's, so agents observing at tick t
+	// always see the entry scheduled for t; ticks without an entry clear the key to null.
+	// initialize 写入 tick 0 的条目，step 写入 tick t+1 的，agent 在 tick t 观察时看到的总是
+	// 为 t 安排的条目；没有条目的 tick 把键清为 null。
 	async initialize(_world: WorldView, _rng: Rng): Promise<readonly Effect[]> {
 		return [this.inject(0)];
 	}

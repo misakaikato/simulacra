@@ -1,3 +1,8 @@
+// Persona component: projects the agent's public `persona.*` columns into the prompt and lifts
+// the name field out separately; private fields never leave the world table.
+// 人设组件：把 agent 公开的 `persona.*` 列投影进 prompt，并单独提出姓名字段；
+// 私有字段永远不离开世界表。
+
 import type { Component } from "../../core/protocols";
 import type { JsonObject, JsonValue, Scalar } from "../../core/types";
 import { CONTEXT_KEYS } from "./shared";
@@ -11,6 +16,10 @@ export interface PersonaOptions {
 
 const scalarJson = (v: Scalar): JsonValue => (Array.isArray(v) ? [...v] : v);
 
+// The wildcard read keeps declare() satisfied for any persona layout; filtering happens on the
+// actual row, so a scenario that adds fields later needs no component change.
+// 通配读键让 declare() 对任何人设布局都成立；过滤发生在实际行上，
+// 场景日后增加字段无需改组件。
 export const persona = (options: PersonaOptions): Component => {
 	const hidden = new Set(options.privateFields.map((f) => `${options.prefix}${f}`));
 	return {

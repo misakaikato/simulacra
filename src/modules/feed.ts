@@ -1,3 +1,9 @@
+// Feed module: owns the `post` table and the per-user `rec` table, defines post/repost/reply/
+// like/silent (silent is the fallback action) and materialises every user's ranked feed once per
+// tick in step, so observation is a row lookup rather than a ranking pass.
+// 信息流模块：拥有 `post` 表与按用户的 `rec` 表，定义 post/repost/reply/like/silent
+// （silent 是兜底动作），每 tick 在 step 里物化所有用户的排序信息流，观察只是查一行而非重排。
+
 import { z } from "zod";
 import { ActionRejected, defineAction } from "../core/actions";
 import { ZERO_EVENT_ID, toEntityId } from "../core/ids";
@@ -53,6 +59,10 @@ export interface FeedItem {
 	readonly t: number;
 }
 
+// likes and reposts merge by `sum` so same-tick reactions from many agents accumulate instead of
+// the last writer winning; the other columns are set once at creation.
+// likes 与 reposts 按 `sum` 合并，同 tick 多个 agent 的互动会累加而不是最后写者胜出；
+// 其余列只在创建时写一次。
 const POST_DECLS: readonly Omit<ColumnDecl, "entity" | "owner">[] = [
 	{ name: "author", dtype: "str", default: "", merge: "last" },
 	{ name: "content", dtype: "str", default: "", merge: "last" },
@@ -112,6 +122,10 @@ const ReplyParams = z.object({
 const LikeParams = z.object({ postId: z.string().min(1).describe("id of the post to like") });
 const SilentParams = z.object({});
 
+// concurrencySafe is false so the kernel steps this module after the concurrently stepped ones;
+// ranking therefore sees the graph module's refreshed adjacency for this tick.
+// concurrencySafe 为 false，内核把本模块排在并发 step 的模块之后；
+// 排序因此看到的是图模块本 tick 刷新后的邻接。
 class FeedModule implements Module {
 	readonly name: string;
 	readonly concurrencySafe = false;
@@ -136,6 +150,9 @@ class FeedModule implements Module {
 		return ok(undefined);
 	}
 
+	// A repost is a new post row carrying the original's content and `parent`, plus an inc on the
+	// original's counter; reply and like only require the target post to exist.
+	// 转发是一条带原帖内容与 `parent` 的新帖行，外加原帖计数器的 inc；回复与点赞只要求目标帖存在。
 	actions(): readonly ActionDef[] {
 		const requiresModules = [this.name];
 		const existing = (view: WorldView, postId: string): Readonly<Record<string, Scalar>> => {
@@ -256,6 +273,9 @@ class FeedModule implements Module {
 		return out;
 	}
 
+	// The rec row is keyed by the user's own id: created on first sight, overwritten afterwards, so
+	// the table never grows beyond the population.
+	// rec 行以用户自己的 id 为键：首次出现时创建，之后覆盖，表不会超过人口规模。
 	async step(view: WorldView, t: LogicalTime, rng: Rng): Promise<readonly Effect[]> {
 		const users = view.ids(this.options.entity);
 		const ranked = this.recommender.rank(view, users, t, rng, this.options.size);

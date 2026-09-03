@@ -1,3 +1,9 @@
+// Cache provider: memoises downstream decisions under a hash of (state subset, observation
+// subset). Hits are replayed with provenance `cache` and zero cost, identical keys inside one
+// batch share a single downstream call, and entries survive checkpoints through getState.
+// 缓存提供者：按（状态子集，观察子集）的哈希记忆下游决策。命中以 provenance `cache`、零成本
+// 复用，同一批内相同键只调一次下游，条目经 getState 跨检查点保留。
+
 import { z } from "zod";
 import { canonicalJson, sha256Hex } from "../core/hash";
 import type { DecisionProvider } from "../core/protocols";
@@ -65,6 +71,7 @@ const subset = (source: JsonObject, keys: readonly string[] | undefined): JsonOb
 
 // Key fields are written as state.<column> or observation.<key>; without any the whole
 // state and observation form the key.
+// 键字段写成 state.<列名> 或 observation.<键名>；不给键字段时整个状态与观察构成键。
 export const cacheKeyOf = (req: DecisionRequest, keyFields?: readonly string[]): string => {
 	const stateKeys =
 		keyFields === undefined
@@ -126,6 +133,11 @@ class CacheProvider implements DecisionProvider {
 		this.downstream = downstream;
 	}
 
+	// A hit is usable only while the cached action is still in the request's action space;
+	// otherwise the request goes downstream and the entry is overwritten. Failures are never
+	// cached, so a transient downstream error is retried on the next identical request.
+	// 只有缓存的动作仍在请求的动作空间内才算命中；否则请求走下游并覆盖条目。
+	// 失败从不缓存，下游的瞬时错误在下一次相同请求时会重试。
 	async decide(
 		requests: readonly DecisionRequest[],
 		ctx: RoundContext,

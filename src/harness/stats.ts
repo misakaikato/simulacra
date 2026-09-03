@@ -1,3 +1,9 @@
+// Statistics for the audit: pure, dependency-free implementations of the tests the report
+// needs (Mann-Whitney U with an exact small-sample tail, Holm, Cohen d, a seeded bootstrap, TVD,
+// W1, Cliff's delta) plus the evidence grade. Every sample is filtered to finite values first.
+// 审计用的统计：报告所需检验的纯函数、无依赖实现（含小样本精确尾部的 Mann-Whitney U、Holm、
+// Cohen d、带种子的 bootstrap、TVD、W1、Cliff delta）以及证据等级。所有样本先滤掉非有限值。
+
 import type { Rng } from "../core/protocols";
 import type { AuditPlan, AuditReport, Outcome } from "../core/types";
 
@@ -21,6 +27,7 @@ export const standardDeviation = (xs: readonly number[]): number => Math.sqrt(va
 const ascending = (xs: readonly number[]): readonly number[] => [...xs].sort((a, b) => a - b);
 
 // Ranks with ties averaged; tieCorrection is the sum of t^3 - t over tie groups
+// 并列取平均秩；tieCorrection 是各并列组 t^3 - t 之和
 
 export interface RankInfo {
 	readonly ranks: readonly number[];
@@ -48,6 +55,7 @@ export const rankWithTies = (values: readonly number[]): RankInfo => {
 };
 
 // Standard normal CDF by Marsaglia's series (2004), absolute error about 1e-15 for |x| <= 8
+// 标准正态 CDF，用 Marsaglia（2004）级数，|x| <= 8 时绝对误差约 1e-15
 
 const SQRT_2PI = Math.sqrt(2 * Math.PI);
 
@@ -68,6 +76,7 @@ export const normalCdf = (x: number): number => {
 
 // Exact distribution of U for sample sizes m and n without ties:
 // p(u; m, n) = m/(m+n) p(u-n; m-1, n) + n/(m+n) p(u; m, n-1)
+// 无并列时样本量 m、n 的 U 精确分布，按上式逐列递推；结果是长度 m*n+1 的概率质量函数
 
 export const exactMwuPmf = (m: number, n: number): Float64Array => {
 	let previous: Float64Array[] = Array.from({ length: m + 1 }, () => Float64Array.of(1));
@@ -96,6 +105,11 @@ export interface MwuResult {
 
 export const EXACT_MWU_LIMIT = 8;
 
+// Two-sided p: exact enumeration when the smaller sample has fewer than 8 values and no ties
+// (the recursion assumes distinct ranks), otherwise the normal approximation with tie
+// correction and a 0.5 continuity correction; z <= 0 saturates at p = 1.
+// 双侧 p 值：较小样本少于 8 个且无并列时精确枚举（递推假设秩互不相同），
+// 否则用带并列修正与 0.5 连续性校正的正态近似；z <= 0 时 p 饱和为 1。
 export const mannWhitneyU = (a: readonly number[], b: readonly number[]): MwuResult => {
 	const x = finiteOnly(a);
 	const y = finiteOnly(b);
@@ -121,6 +135,7 @@ export const mannWhitneyU = (a: readonly number[], b: readonly number[]): MwuRes
 };
 
 // Cohen's d with the pooled (n - 1) standard deviation; zero spread gives 0 or a signed infinity
+// Cohen d 用合并（n - 1）标准差；无离散时给 0 或带符号的无穷大（JSON 落 null，HTML 显示 inf）
 
 export const cohenD = (a: readonly number[], b: readonly number[]): number => {
 	const x = finiteOnly(a);
@@ -137,6 +152,7 @@ export const cohenD = (a: readonly number[], b: readonly number[]): number => {
 };
 
 // Percentile bootstrap of the mean difference, driven entirely by the given rng
+// 均值差的百分位 bootstrap，随机性完全由传入的 rng 驱动，同一计划哈希下结果确定
 
 export const bootstrapMeanDiffCI = (
 	a: readonly number[],
@@ -163,6 +179,8 @@ export const bootstrapMeanDiffCI = (
 };
 
 // Holm step-down adjustment; non-finite p-values count as 1
+// Holm 逐步下降校正；非有限 p 值按 1 计。running 取最大值保证单调：原始 p 更大的假设
+// 永远不会拿到更小的校正值
 
 export const holm = (pValues: readonly number[]): readonly number[] => {
 	const m = pValues.length;
@@ -178,6 +196,7 @@ export const holm = (pValues: readonly number[]): readonly number[] => {
 };
 
 // Distribution distances
+// 分布距离
 
 const normalize = (p: readonly number[]): readonly number[] => {
 	const total = sum(p);
@@ -199,6 +218,10 @@ export const uniform = (k: number): readonly number[] =>
 export const tvdToUniform = (p: readonly number[]): number =>
 	p.length === 0 ? 0 : tvd(p, uniform(p.length));
 
+// SimBench-style score 100 * (1 - TVD(p, q) / TVD(p, uniform)): 100 is a perfect match and 0
+// means no closer to the target than the uniform distribution, whatever the bin count.
+// SimBench 式得分 100 * (1 - TVD(p, q) / TVD(p, uniform))：100 为完全吻合，
+// 0 表示不比均匀分布更接近目标，与箱数无关。
 export const simbenchScore = (p: readonly number[], q: readonly number[]): number => {
 	const distance = tvd(p, q);
 	const denominator = tvdToUniform(p);
@@ -207,6 +230,7 @@ export const simbenchScore = (p: readonly number[], q: readonly number[]): numbe
 };
 
 // W1 as the integral of |F_a - F_b| between consecutive breakpoints of the merged samples
+// W1 取合并样本相邻断点之间 |F_a - F_b| 的积分，即经验 CDF 之差的面积
 
 export const wasserstein1 = (a: readonly number[], b: readonly number[]): number => {
 	const x = ascending(finiteOnly(a));
@@ -248,6 +272,10 @@ const upperBound = (sorted: readonly number[], v: number): number => {
 	return lo;
 };
 
+// Cliff's delta = P(x > y) - P(x < y) over all pairs, counted with binary searches on the sorted
+// second sample so the cost is O((m + n) log n) rather than O(m n); ties count for neither side.
+// Cliff delta = 全部配对上的 P(x > y) - P(x < y)，在排好序的第二样本上二分计数，
+// 代价为 O((m + n) log n) 而非 O(m n)；并列两边都不计。
 export const cliffDelta = (a: readonly number[], b: readonly number[]): number => {
 	const x = finiteOnly(a);
 	const y = ascending(finiteOnly(b));
@@ -262,6 +290,7 @@ export const cliffDelta = (a: readonly number[], b: readonly number[]): number =
 };
 
 // Direction and evidence
+// 方向与证据等级
 
 export const directionFlip = (
 	meanBase: number,
@@ -280,6 +309,11 @@ export const directionFlip = (
 
 const AXIS_LEVELS = ["micro", "meso", "macro"] as const;
 
+// Grades follow 4.4 step 7: weak below 10 replications, with any single-level axis or with no
+// axes at all (appendix E); strong needs 30 replications, 3 levels per axis, 2 models and, for
+// policy claims, axes at the micro, meso and macro levels.
+// 等级按 4.4 第 7 步：复制数不足 10、任一轴只有一个取值或根本没有轴（附录 E）为 weak；
+// strong 需要 30 次复制、每轴 3 个取值、2 个模型，policy 类主张还要求轴覆盖 micro/meso/macro。
 export const evidenceGrade = (
 	plan: Pick<AuditPlan, "replications" | "axes" | "models" | "claimType">,
 ): EvidenceGrade => {

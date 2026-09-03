@@ -1,3 +1,9 @@
+// Condition generation for an audit plan (pure): one_at_a_time yields the base plus one
+// condition per axis level, full_factorial the base plus the Cartesian product; both are then
+// crossed with the model list. Ids and flags are derived deterministically from the plan.
+// 审计计划的条件生成（纯函数）：one_at_a_time 产出基线加每轴每取值一个条件，full_factorial
+// 产出基线加笛卡尔积；两者再与模型列表叉乘。条件 id 与标志都由计划确定性地导出。
+
 import { ok } from "../core/result";
 import { overrideScenario, scenarioHash, type OverrideError } from "../core/scenario";
 import type {
@@ -25,6 +31,9 @@ export type Assignment = readonly AxisChoice[];
 const levelsOf = (axis: PerturbationAxis, index: number): readonly Assignment[] =>
 	axis.levels.map((_, level) => [{ axis: index, level }]);
 
+// The empty assignment comes first in both designs: it is the `base` condition every pairwise
+// test compares against (appendix F).
+// 两种设计里空指派都排在最前：它就是所有成对检验的基线 `base` 条件（附录 F）。
 export const assignmentsOf = (
 	axes: readonly PerturbationAxis[],
 	design: AuditPlan["design"],
@@ -41,6 +50,9 @@ export const assignmentsOf = (
 	return [[], ...product];
 };
 
+// `@model` is appended only when the plan lists models explicitly, so single-model plans keep
+// the short ids (appendix E).
+// 只有计划显式列出 models 时才追加 `@model`，单模型计划保留短 id（附录 E）。
 export const conditionIdOf = (
 	axes: readonly PerturbationAxis[],
 	assignment: Assignment,
@@ -81,6 +93,10 @@ const applyAssignment = (
 	return ok({ scenario, axisValues });
 };
 
+// `identicalToBase` is judged on the scenario hash before the model override, so a level that
+// merely restates the base value is flagged instead of silently doubling the baseline.
+// `identicalToBase` 以模型覆盖之前的场景哈希判定，取值恰好等于基线值的条件会被标记，
+// 而不是悄悄变成第二个基线。
 export const generateConditions = (
 	plan: AuditPlan,
 ): Result<readonly Condition[], OverrideError> => {
@@ -110,5 +126,8 @@ export const generateConditions = (
 
 export const isBaseCondition = (c: Condition): boolean => Object.keys(c.axisValues).length === 0;
 
+// A condition's baseline is the base condition of the same model; cross-model differences are
+// reported in crossModel, never as pairwise tests.
+// 条件的基线是同一模型的 base 条件；跨模型差异只进 crossModel，从不做成对检验。
 export const baselineOf = (conditions: readonly Condition[], c: Condition): Condition | undefined =>
 	conditions.find((b) => isBaseCondition(b) && b.model === c.model);

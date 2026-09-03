@@ -1,3 +1,9 @@
+// Registration entry for the built-in decision providers: parses each provider's options,
+// resolves composite providers' downstreams by name through the plugin context (which detects
+// cycles at assembly time) and injects scenario-level defaults such as the token budget.
+// 内置决策提供者的注册入口：解析各提供者选项，组合器的下游按名字经插件上下文解析
+// （装配期在那里检测循环引用），并注入 token 预算等场景级默认值。
+
 import { z } from "zod";
 import { PERSONA_PREFIX } from "../core/population";
 import type {
@@ -45,6 +51,7 @@ export const CohortRuleOptionsSchema = z.object({
 const nameOf = (spec: PluginSpec): string => spec.name ?? spec.kind;
 
 // Composite providers hold their downstream by name and resolve it through the context.
+// 组合器只持有下游的名字，通过上下文解析成实例。
 export const downstreamOf = (
 	slot: string,
 	spec: PluginSpec,
@@ -61,6 +68,10 @@ export const downstreamOf = (
 	return ctx.provider(name);
 };
 
+// groupOn is checked against the population's declared fields at construction so a misspelt
+// column fails assembly once instead of failing every decision round.
+// groupOn 在构造时就对照人口声明的字段校验，拼错的列名在装配期失败一次，
+// 而不是每轮决策都失败。
 const personaColumnsMissing = (
 	columns: readonly string[],
 	ctx: PluginContext,
@@ -71,6 +82,10 @@ const personaColumnsMissing = (
 	return columns.filter((c) => c.startsWith(PERSONA_PREFIX) && !declared.has(c));
 };
 
+// `llm` falls back to the scenario's maxCompletionTokens budget when no maxTokens is given, so a
+// provider can never ask for more than the run is allowed to spend per call.
+// `llm` 未指定 maxTokens 时回退到场景的 maxCompletionTokens 预算，
+// 提供者单次调用永远不会超出运行允许的上限。
 export const registerBuiltinProviders = (
 	registry: Registry,
 	deps: ProviderDeps = {},

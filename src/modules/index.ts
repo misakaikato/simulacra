@@ -1,3 +1,8 @@
+// Registration entry and public surface of the built-in world modules; column-name constants
+// are re-exported here so other plugin layers can reference tables without importing modules.
+// 内置世界模块的注册入口与公开出口；列名常量在此再导出，
+// 其它插件层引用表时无需引入模块本身。
+
 import type { DuplicatePlugin, Module, PluginFactory, Registry } from "../core/protocols";
 import { ok } from "../core/result";
 import type { Result } from "../core/types";

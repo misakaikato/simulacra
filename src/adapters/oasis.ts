@@ -1,3 +1,11 @@
+// OASIS adapter: runs the external OASIS script through the script contract, then imports the
+// SQLite database it wrote into this kernel's formats. user/post/follow rows become the
+// agent/post/edge tables, the trace table becomes observation, decision and effect events, and
+// the registered metrics are computed on the result. importOasis also works on its own.
+// OASIS 适配器：经脚本契约运行外部 OASIS 脚本，再把它写出的 SQLite 数据库导入本内核的格式。
+// user/post/follow 行变成 agent/post/edge 表，trace 表变成观察、决策与效果事件，
+// 并在结果上计算注册的指标。importOasis 也可独立使用。
+
 import { Database } from "bun:sqlite";
 import { existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -56,6 +64,9 @@ const ZERO_COST: Cost = {
 	wallMs: 0,
 };
 
+// Imported ids keep an `oasis:` prefix so they can never collide with ids the kernel mints and
+// the origin of a row stays visible in inspect output.
+// 导入的 id 带 `oasis:` 前缀，不会与内核生成的 id 撞车，检视输出里也能看出行的来源。
 export const oasisAgentId = (userId: unknown): EntityId =>
 	toEntityId(`${OASIS_ID_PREFIX}${String(userId)}`);
 export const oasisPostId = (postId: unknown): EntityId =>
@@ -69,6 +80,11 @@ const stringOf = (v: unknown): string =>
 	v === null || v === undefined ? "" : typeof v === "string" ? v : String(v);
 const numberOf = (v: unknown): number => (typeof v === "number" && Number.isFinite(v) ? v : 0);
 
+// `created_at` is a DATETIME column that may hold a simulation step or a wall-clock stamp
+// depending on how OASIS was run; only integral values become ticks, anything else falls back
+// to the row index so trace order is still preserved.
+// `created_at` 是 DATETIME 列，随 OASIS 的运行方式可能是模拟步数或真实时间戳；
+// 只有整数值当作 tick，其余回退为行下标，轨迹顺序仍得以保留。
 export const tickOf = (createdAt: unknown, fallback: number): number => {
 	if (typeof createdAt === "number" && Number.isInteger(createdAt)) return createdAt;
 	if (typeof createdAt === "string" && /^-?\d+$/.test(createdAt.trim()))
@@ -94,6 +110,10 @@ export const parseInfo = (info: unknown): ParsedInfo => {
 	}
 };
 
+// Only actions with a world footprint (post, like, follow) yield effects; the remaining OASIS
+// actions still become decision events so action shares stay computable.
+// 只有留下世界痕迹的动作（发帖、点赞、关注）产生效果；其余 OASIS 动作仍记为决策事件，
+// 动作占比依然可算。
 export const traceEffects = (
 	action: string,
 	agentId: EntityId,
@@ -160,6 +180,7 @@ export const traceEffects = (
 };
 
 // World: the user table becomes the agent table, post becomes post, follow becomes edge
+// 世界：user 表变成 agent 表，post 变成 post，follow 变成 edge
 
 const DECLS: readonly ColumnDecl[] = [
 	{
@@ -325,6 +346,7 @@ const buildWorld = (
 };
 
 // Trace: REFRESH becomes an observation, every other action a decision plus its effects
+// 轨迹：REFRESH 变成观察事件，其它动作各变成一条决策加其效果
 
 interface TraceSummary {
 	readonly observations: number;
@@ -332,6 +354,11 @@ interface TraceSummary {
 	readonly parseFailures: number;
 }
 
+// Event ids come from a fixed-seed rng and seq counts per tick, so importing the same database
+// twice yields the same digest; malformed `info` JSON is kept as a string and counted as a
+// parse failure instead of dropping the row.
+// 事件 id 由固定种子的 rng 生成，seq 按 tick 计数，同一数据库导入两次得到相同 digest；
+// `info` 不是合法 JSON 时按字符串保留并计一次解析失败，而不是丢弃该行。
 const importTrace = (traces: readonly Row[], log: EventLog, runId: RunId): TraceSummary => {
 	const rng = rngFromSeed(0, [keyFromLabel("oasis-import")]);
 	const seqByTick = new Map<number, number>();
@@ -419,6 +446,7 @@ const importTrace = (traces: readonly Row[], log: EventLog, runId: RunId): Trace
 };
 
 // Metrics
+// 指标
 
 export type MetricRequest = string | InstrumentSpec;
 
@@ -465,6 +493,7 @@ export interface OasisImportSummary {
 }
 
 // With overwrite only the importer's own files are replaced; other files in the directory are kept
+// overwrite 只替换导入器自己的产物；目录里的其它文件保留（附录 F）
 const prepareOutDir = (outDir: string, overwrite: boolean): Result<void, string> => {
 	if (existsSync(outDir) && readdirSync(outDir).length > 0) {
 		if (!overwrite)
@@ -484,6 +513,10 @@ const openReadonly = (dbPath: string): Result<Database, string> => {
 	}
 };
 
+// The database is opened read-only and the log is closed in `finally`, so a metric that throws
+// still leaves a consistent run directory with the failure recorded in result.json.
+// 数据库只读打开，日志在 `finally` 里关闭，指标抛异常时运行目录仍然一致，
+// 失败记录在 result.json 中。
 export const importOasis = (
 	dbPath: string,
 	outDir: string,
@@ -601,7 +634,12 @@ export interface OasisAdapterOptions extends ScriptAdapterOptions {
 }
 
 // Runs the external OASIS script, then imports the database it wrote into the run directory
+// 运行外部 OASIS 脚本，再把它写出的数据库导入运行目录
 
+// The imported result is re-stamped with the harness's scenario id, hash and seed so it lines
+// up with the replication that produced it rather than the generic `oasis` scenario.
+// 导入的结果重新盖上 harness 的场景 id、哈希与种子，对齐产生它的那次复制，
+// 而不是通用的 `oasis` 场景。
 export const createOasisAdapter = (options: OasisAdapterOptions): Adapter => {
 	const script = createScriptAdapter({ ...options, name: options.name ?? OASIS_ADAPTER_KIND });
 	const run: RunFn = async (scenario, seed, outDir) => {

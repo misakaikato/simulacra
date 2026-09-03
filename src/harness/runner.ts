@@ -1,3 +1,11 @@
+// Audit orchestration (4.4): generate conditions, spawn replications, run them through a
+// Promise pool with one directory per run, then hand the collected RunResults to the pure
+// `analyze` step and write audit.json plus report.html. A failed run becomes a FailureInfo
+// record and never aborts the audit.
+// 审计编排（4.4）：生成条件、派生复制、经 Promise 池运行（每个 run 独立目录），再把收集到的
+// RunResult 交给纯函数 `analyze`，写出 audit.json 与 report.html。单个 run 失败只记 FailureInfo，
+// 从不中断审计。
+
 import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { makeRunId } from "../core/ids";
@@ -79,6 +87,7 @@ export interface AnalyzeOptions {
 }
 
 // Directory names: the separators of a condition id become file-system safe characters
+// 目录名：条件 id 里的分隔符换成文件系统安全的字符
 
 const SEPARATOR_DIR_CHARS: Readonly<Record<string, string>> = { "=": "-", "|": "+", "@": "~" };
 const SAFE_DIR_CHAR = /[A-Za-z0-9._+~-]/;
@@ -110,6 +119,7 @@ export const conditionDirNames = (
 };
 
 // Scenario preparation: provider override, temperature 0 and a condition-specific scenario id
+// 场景准备：提供者覆盖、温度归 0、按条件改写场景 id
 
 const withZeroTemperature = (scenario: Scenario): Scenario => {
 	const providers: Record<string, ProviderSpec> = {};
@@ -121,6 +131,10 @@ const withZeroTemperature = (scenario: Scenario): Scenario => {
 	return { ...scenario, providers };
 };
 
+// Temperature is forced to 0 for llm providers (appendix E) so replications differ by seed
+// alone; the `#conditionId` suffix keeps run ids unique across conditions.
+// llm 提供者的温度强制为 0（附录 E），复制之间只差种子；
+// `#conditionId` 后缀让 run id 在条件之间保持唯一。
 export const auditScenario = (
 	condition: Condition,
 	providerOverride: string | undefined,
@@ -145,6 +159,7 @@ export const effectivePlan = (
 });
 
 // Running
+// 运行
 
 const describeError = (e: unknown): FailureInfo => ({
 	stage: "run",
@@ -180,6 +195,9 @@ export const failedRunResult = (
 	logPath: join(dir, LOG_FILE),
 });
 
+// Workers pull the next index from a shared counter, so results keep task order while at most
+// `concurrency` runs are in flight.
+// 各 worker 从共享计数器领取下一个下标，结果保持任务顺序，同时在飞的 run 不超过 `concurrency`。
 export const runPool = async <T>(
 	tasks: readonly (() => Promise<T>)[],
 	concurrency: number,
@@ -229,6 +247,7 @@ const prepareOutDir = (outDir: string, overwrite: boolean): Result<void, AuditEr
 };
 
 // Statistics over the collected runs (pure)
+// 对收集到的 run 做统计（纯函数）
 
 const eligible = (run: AuditRun, includeIncomplete: boolean): boolean =>
 	run.result.status === "succeeded" && (includeIncomplete || run.result.integrity.complete);
@@ -272,6 +291,11 @@ const absDescending = (a: number, b: number): number => {
 	return y - x;
 };
 
+// The bootstrap rng is seeded from the plan hash plus the metric and condition labels, so each
+// CI is reproducible and independent of the order tests are computed in. Pairs with fewer than
+// 2 usable values on either side are skipped; Holm is applied within each metric (4.4 step 5).
+// bootstrap 的 rng 由计划哈希加指标与条件标签派生，每个置信区间可复现且与检验计算顺序无关。
+// 任一侧可用值不足 2 的配对跳过；Holm 校正在每个指标内进行（4.4 第 5 步）。
 export const analyze = (
 	plan: AuditPlan,
 	hash: string,
@@ -347,6 +371,9 @@ export const analyze = (
 		directionConsistency[metric] = tests.filter((t) => !t.directionFlip).length / tests.length;
 	}
 
+	// An axis's sensitivity is the largest |Cohen d| of any condition that perturbs it, over all
+	// metrics; infinities sort first and NaNs last.
+	// 一个轴的敏感度是所有扰动该轴的条件在全部指标上的最大 |Cohen d|；无穷大排最前，NaN 排最后。
 	const best = new Map<string, number>(plan.axes.map((axis) => [axis.id, 0] as const));
 	for (const t of pairwise) {
 		const condition = conditions.find((c) => c.conditionId === t.b);
@@ -360,6 +387,11 @@ export const analyze = (
 		(x, y) => absDescending(x[1], y[1]) || x[0].localeCompare(y[0]),
 	);
 
+	// Normalised TVD is 1 - simbenchScore / 100, i.e. TVD to the target divided by the target's TVD
+	// to uniform; the histogram range is the union of both groups so base and condition are binned
+	// identically (appendix E).
+	// 归一化 TVD 是 1 - simbenchScore / 100，即到目标的 TVD 除以目标到均匀分布的 TVD；
+	// 直方图范围取两组并集，基线与条件按同一分箱（附录 E）。
 	const distributionTests: DistributionTest[] = [];
 	for (const metric of distributionNames) {
 		const target = targetOf(plan, metric);
@@ -406,6 +438,10 @@ export const analyze = (
 		crossModel[model] = row;
 	}
 
+	// Integrity and cost are summed over every run, failed and excluded ones included, so the
+	// summary shows what the audit spent rather than only what it analysed.
+	// 完整性与成本对全部 run 求和（含失败与被排除的），汇总反映审计实际花费，
+	// 而不只是纳入分析的那部分。
 	const integritySummary: Record<string, number> = {
 		runs: runs.length,
 		succeeded: 0,
@@ -474,6 +510,10 @@ export const analyze = (
 	};
 };
 
+// plan.json is written before any run starts so an audit that dies midway still leaves its
+// effective plan behind; `overwrite` removes the whole output directory (appendix F).
+// plan.json 在任何 run 开始前就写出，审计中途死亡也留下实际生效的计划；
+// `overwrite` 删除整个输出目录（附录 F）。
 export const audit = async (
 	plan: AuditPlan,
 	run: RunFn,

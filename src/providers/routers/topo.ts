@@ -1,3 +1,11 @@
+// Topology router: builds bounded-diameter cells over the social graph from each agent's
+// structural position, opinion, stubbornness and exposure histogram, sends one caller per cell
+// to the downstream and copies its decision to the cell's other members. Cells are rebuilt every
+// `updateInterval` ticks; without a graph every request goes downstream unchanged.
+// 拓扑路由：按每个 agent 的结构位置、观点、固执度与暴露直方图在社交图上构造有界直径单元，
+// 每个单元只派一个调用者去下游，决策复制给单元内其它成员。单元每 `updateInterval` tick 重建；
+// 没有图时所有请求原样下发。
+
 import { z } from "zod";
 import type { DecisionProvider, GraphView, WorldView } from "../../core/protocols";
 import { err, ok } from "../../core/result";
@@ -21,6 +29,10 @@ const positive = z.number().positive();
 export const TopoOptionsSchema = z.object({
 	downstream: z.string().min(1),
 	entity: z.string().min(1).default("agent"),
+	// Each epsilon is the tolerance of one distance component; execution distance 1 is the cell
+	// diameter bound, so smaller epsilons mean smaller cells and more downstream calls.
+	// 每个 epsilon 是一个距离分量的容差；执行距离 1 是单元直径上限，
+	// epsilon 越小单元越小、下游调用越多。
 	epsilon: z
 		.object({
 			structural: positive.default(1),
@@ -79,6 +91,7 @@ const StateSchema = z.object({
 const numberOf = (v: Scalar | undefined): number => (typeof v === "number" ? v : 0);
 
 // d_exec = max(structural / eps, |opinion delta| / eps, |stubbornness delta| / eps, exposure L1 / eps)
+// d_exec = max(结构距离 / eps, |观点差| / eps, |固执度差| / eps, 暴露直方图 L1 / eps)
 export const execDistance = (a: AgentProfile, b: AgentProfile, eps: Epsilon): number => {
 	const dx = a.position[0] - b.position[0];
 	const dy = a.position[1] - b.position[1];
@@ -91,6 +104,10 @@ export const execDistance = (a: AgentProfile, b: AgentProfile, eps: Epsilon): nu
 	return Math.max(structural, opinion, stubbornness, l1 / eps.exposure);
 };
 
+// Exposure is the normalised histogram of neighbours' opinions over the population's range;
+// comparing histograms by L1 captures "who they hear" independently of degree.
+// 暴露是邻居观点在全体人口取值范围上的归一化直方图；用 L1 比较直方图，
+// 刻画"听到了谁"而与度数无关。
 export const exposureHistogram = (
 	opinions: readonly number[],
 	range: readonly [number, number],
@@ -108,6 +125,9 @@ export const exposureHistogram = (
 	return counts.map((c) => c / opinions.length);
 };
 
+// Structural position is (degree, size of the two-hop ring minus self and direct neighbours), a
+// cheap proxy for graph placement that needs no embedding.
+// 结构位置是（度数，去掉自身与直接邻居后的二跳环大小），无需嵌入的廉价图位置代理。
 export const profilesOf = (
 	world: WorldView,
 	graph: GraphView,
@@ -152,6 +172,8 @@ export const profilesOf = (
 
 // Greedy bounded-diameter cells: scanning agents in id order, each joins the first cell whose
 // members all lie within execution distance 1, otherwise it opens a new cell.
+// 贪心有界直径单元：按 id 顺序扫描 agent，加入第一个所有成员都在执行距离 1 内的单元，
+// 否则新开一个单元。
 export const buildCells = (profiles: readonly AgentProfile[], eps: Epsilon): readonly Cell[] => {
 	const ordered = [...profiles].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
 	const cells: AgentProfile[][] = [];
@@ -162,6 +184,9 @@ export const buildCells = (profiles: readonly AgentProfile[], eps: Epsilon): rea
 		if (cell === undefined) cells.push([profile]);
 		else cell.push(profile);
 	}
+	// The representative is the member with the smallest eccentricity inside its cell, so copied
+	// decisions come from the most central agent rather than the first one scanned.
+	// 代表是单元内离心率最小的成员，复制出去的决策来自最居中的 agent，而不是最先扫到的那个。
 	return cells.map((members) => {
 		let representative = members[0];
 		let best = Number.POSITIVE_INFINITY;
@@ -247,6 +272,10 @@ class TopoDecisionProvider implements DecisionProvider {
 			const r = fetched[k];
 			if (r !== undefined) resultAt.set(i, r);
 		});
+		// Copied decisions carry provenance `prototype` and zero cost; the caller keeps its own
+		// downstream result untouched, and a caller failure is reported for every cell member.
+		// 复制的决策标 provenance `prototype`、零成本；调用者保留自己的下游结果，
+		// 调用者失败则单元内每个成员都记失败。
 		return requests.map((req, index) => {
 			const caller = callerOf.get(index) ?? index;
 			const result = resultAt.get(caller);
@@ -338,6 +367,7 @@ class TopoDecisionProvider implements DecisionProvider {
 
 	// The representative answers for the cell when it is in the batch; otherwise the batch
 	// member closest to it does.
+	// 代表在本批中时由它作答；否则由本批中离它最近的成员作答。
 	private callerFor(
 		cellIndex: number,
 		indices: readonly number[],

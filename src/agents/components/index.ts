@@ -1,3 +1,8 @@
+// Factory for the built-in focal components: parses each component's options and injects what
+// only the plugin context knows (private persona fields, the LLM gateway, the logger).
+// 内置 focal 组件的工厂：解析各组件选项，并注入只有插件上下文才知道的东西
+// （私有人设字段、LLM 网关、日志器）。
+
 import { z } from "zod";
 import type { Component, PluginContext, PluginError } from "../../core/protocols";
 import { PERSONA_PREFIX } from "../../core/population";
@@ -41,6 +46,9 @@ export const createComponent = (
 	ctx: PluginContext,
 ): Result<Component, PluginError> => {
 	switch (spec.kind) {
+		// Private population fields are hidden at construction time so the prompt can never leak
+		// them, whatever columns the persona component later sees.
+		// 私有人口字段在构造时就被隐藏，之后无论 persona 组件看到哪些列，prompt 都不可能泄露它们。
 		case "persona": {
 			const o = parseOptions(SLOT, spec, PersonaOptions);
 			if (!o.ok) return o;
