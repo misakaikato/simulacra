@@ -1,3 +1,10 @@
+// Environment and endpoint checks behind `simulacra doctor` and the MCP doctor tool: Bun
+// version, writable cwd, parseable built-in examples and, with llm, the endpoint probe from
+// llm/probe (at most PROBE_MAX_CALLS requests). Also names the SIMULACRA_LLM_* variables.
+// `simulacra doctor` 与 MCP doctor 工具背后的环境与端点检查：Bun 版本、cwd 可写、内置示例可解析，
+// 带 llm 时再做 llm/probe 的端点探测（最多 PROBE_MAX_CALLS 次请求）。同时定义 SIMULACRA_LLM_*
+// 变量名。
+
 import { existsSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import pkg from "../package.json" with { type: "json" };
@@ -32,6 +39,8 @@ const bunCheck = (): DoctorCheck => {
 	return { name: "bun", ok, detail: `bun ${Bun.version} (need >= ${MIN_BUN.join(".")})` };
 };
 
+// The probe file carries the pid so two doctors in one directory do not delete each other's.
+// 探测文件带 pid，同一目录里两个 doctor 不会互删。
 const writableCheck = (cwd: string): DoctorCheck => {
 	const probe = join(cwd, `.simulacra-doctor-${process.pid}`);
 	try {
@@ -72,6 +81,9 @@ export const doctor = async (
 		writableCheck(opts.cwd ?? process.cwd()),
 		examplesCheck(opts.examplesDir ?? EXAMPLES_DIR),
 	];
+	// A missing API key aborts with an error instead of a failed check: the probe cannot run at
+	// all, and a partial list would read like a diagnosis.
+	// 缺 API key 直接以错误中止而不是记一条失败检查：探测根本跑不了，残缺的列表会被当成诊断结论。
 	if (!opts.llm) return ok(checks);
 	const env = opts.env ?? process.env;
 	const apiKey = env[API_KEY_ENV] ?? "";

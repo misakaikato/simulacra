@@ -1,3 +1,11 @@
+// In-process registry of runs and audits behind the API and MCP: starts them in the background
+// on the public runScenario/audit functions, advances progress on activation events and
+// completed runs, fans events out to subscribers and reads finished ones back from the data
+// directory. Directories are runs/<runId with ':' as '__'>/ and audits/<name or 12-char hash>/.
+// API 与 MCP 背后的进程内运行与审计注册表：用公共 runScenario/audit 在后台启动，
+// 以 activation 事件与完成的运行推进进度，把事件分发给订阅者，并从数据目录读回已结束的项目。
+// 目录为 runs/<runId 的 ':' 换成 '__'>/ 与 audits/<名字或 12 位哈希>/。
+
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { makeRunId } from "./core/ids";
@@ -112,6 +120,9 @@ interface AuditEntry {
 	report?: AuditReport;
 }
 
+// runIds contain a colon (scenarioId:replicationId), which is not filename-safe everywhere;
+// ':' becomes '__' and any other unsafe character '_'.
+// runId 含冒号（scenarioId:replicationId），并非处处文件名安全；':' 换成 '__'，其它不安全字符换成 '_'。
 export const runDirName = (runId: RunId): string =>
 	[...String(runId)]
 		.map((ch) =>
@@ -119,6 +130,10 @@ export const runDirName = (runId: RunId): string =>
 		)
 		.join("");
 
+// Naming rule shared by POST /api/runs and MCP run_scenario: without a name the scenarioId
+// becomes <scenarioId>-s<seed>, so runs of one scenario with different seeds get distinct ids.
+// POST /api/runs 与 MCP run_scenario 共用的命名规则：未给 name 时 scenarioId 变成
+// <scenarioId>-s<seed>，同一场景不同种子的运行因此得到不同的 id。
 export const namedScenario = (scenario: Scenario, seed: number, name?: string): Scenario => ({
 	...scenario,
 	scenarioId: name ?? `${scenario.scenarioId}-s${seed}`,
@@ -144,6 +159,10 @@ const isRunResult = (raw: unknown): raw is RunResult =>
 	((raw as { status?: unknown }).status === "succeeded" ||
 		(raw as { status?: unknown }).status === "failed");
 
+// Read failures come back as err with the path and reason and are logged by the caller; they
+// must not collapse into undefined, which would look like a run that never finished.
+// 读取失败以带路径与原因的 err 返回并由调用方记日志；绝不能吞成 undefined，
+// 那看起来会像一个从未结束的运行。
 const readRunResult = (dir: string): Result<RunResult | undefined, string> => {
 	const path = join(dir, RESULT_FILE);
 	if (!existsSync(path)) return ok(undefined);
@@ -171,6 +190,10 @@ const summaryOfEntry = (entry: RunEntry): RunSummary => ({
 	...(entry.result === undefined ? {} : { result: entry.result }),
 });
 
+// A directory with scenario.json but no result.json is a run aborted before finishing (server
+// killed); it is listed as failed at tick 0 rather than hidden.
+// 有 scenario.json 却没有 result.json 的目录是结束前被中止的运行（服务被杀）；
+// 列为 tick 0 失败而不是隐藏。
 const summaryOfDir = (dir: string, logger: Logger): RunSummary | undefined => {
 	const scenario = readRunScenario(dir);
 	if (!scenario.ok) {
@@ -223,6 +246,10 @@ const readPlan = (dir: string): Result<AuditPlan | undefined, string> => {
 		: err(`${path}: ${parsed.error.map((i) => `${i.path.join(".")} ${i.message}`).join("; ")}`);
 };
 
+// audit.json present means the audit finished; otherwise the total is recomputed from the plan
+// so an aborted audit still shows 0/N, and read errors are joined into the summary's error.
+// 有 audit.json 表示审计已完成；否则从计划重算 total，被中止的审计仍显示 0/N，
+// 读取错误合并进摘要的 error。
 const auditSummaryOfDir = (auditId: string, dir: string, logger: Logger): AuditSummary => {
 	const errors: string[] = [];
 	const plan = readPlan(dir);
@@ -263,6 +290,9 @@ const auditSummaryOfDir = (auditId: string, dir: string, logger: Logger): AuditS
 	};
 };
 
+// A throwing subscriber must not break the run loop or the other subscribers; the error is
+// logged and delivery continues.
+// 抛异常的订阅者不能拖垮运行循环或其它订阅者；记下错误后继续分发。
 const notifyAll = <M>(
 	handlers: ReadonlySet<(message: M) => void>,
 	message: M,
@@ -287,6 +317,10 @@ export const createRunRegistry = (opts: RunRegistryOptions): RunRegistry => {
 	const runDir = (runId: RunId): string => join(runsDir, runDirName(runId));
 	const auditDir = (auditId: string): string => join(auditsDir, auditId);
 
+	// A run that failed before the kernel wrote anything still gets scenario.json and result.json,
+	// so it survives a restart and is listed like any other failed run.
+	// 在内核写下任何东西之前就失败的运行也会得到 scenario.json 与 result.json，
+	// 重启后仍在，并像其它失败的运行一样被列出。
 	const persistEarlyFailure = (dir: string, scenario: Scenario, result: RunResult): void => {
 		mkdirSync(dir, { recursive: true });
 		if (!existsSync(join(dir, SCENARIO_FILE)))
@@ -317,6 +351,9 @@ export const createRunRegistry = (opts: RunRegistryOptions): RunRegistry => {
 				...(input.ticks === undefined ? {} : { ticksOverride: input.ticks }),
 				...(input.provider === undefined ? {} : { providerOverride: input.provider }),
 				...(opts.logLevel === undefined ? {} : { logLevel: opts.logLevel }),
+				// Progress advances on activation events because they open each tick; that tick is
+				// what the GUI shows while the run is in flight.
+				// 进度靠 activation 事件推进，因为它开启每个 tick；运行中 GUI 显示的就是这个 tick。
 				onEvent: (event) => {
 					if (event.kind === "activation") entry.tick = event.t.tick;
 					notifyAll(entry.handlers, { kind: "event", event }, logger);
@@ -357,6 +394,9 @@ export const createRunRegistry = (opts: RunRegistryOptions): RunRegistry => {
 			...(input.provider === undefined ? {} : { providerOverride: input.provider }),
 			...(opts.logLevel === undefined ? {} : { logLevel: opts.logLevel }),
 		});
+		// Audit progress counts completed runs, not ticks: the harness runs them in a pool and
+		// only their completion is observable from here.
+		// 审计进度按完成的运行计数而非 tick：harness 在池里跑它们，这里只能观察到完成。
 		const counting: RunFn = async (scenario, seed, outDir) => {
 			const result = await run(scenario, seed, outDir);
 			entry.completed += 1;
@@ -393,6 +433,9 @@ export const createRunRegistry = (opts: RunRegistryOptions): RunRegistry => {
 		dataDir,
 		runDir,
 		auditDir,
+		// The seed is applied before the runId is derived; existence is checked in memory and on
+		// disk so a restarted server cannot overwrite an earlier run's directory.
+		// 种子先套用再派生 runId；内存与磁盘都查存在性，重启后的服务不会覆盖早先运行的目录。
 		startRun(input) {
 			const scenario =
 				input.seed === undefined ? input.scenario : { ...input.scenario, seed: input.seed };
@@ -411,6 +454,11 @@ export const createRunRegistry = (opts: RunRegistryOptions): RunRegistry => {
 			void executeRun(entry, scenario, dir, input);
 			return ok({ runId });
 		},
+		// Conditions are generated up front so an invalid axis fails synchronously instead of
+		// inside the background task. The automatic id omits the provider, so the same plan with
+		// another provider needs an explicit name.
+		// 条件先行生成，无效的轴同步失败而不是在后台任务里失败。自动 id 不含 provider，
+		// 同一计划换 provider 需要显式 name。
 		startAudit(input) {
 			if (input.name !== undefined && !AUDIT_NAME.test(input.name))
 				return err({ kind: "InvalidAuditName", name: input.name });
@@ -435,6 +483,9 @@ export const createRunRegistry = (opts: RunRegistryOptions): RunRegistry => {
 			void executeAudit(entry, dir, input);
 			return ok({ auditId });
 		},
+		// Disk entries first, then in-memory entries override them: a running run has fresher
+		// progress than whatever its directory says.
+		// 先读磁盘条目，再用内存条目覆盖：运行中的运行，其进度比目录里的更新。
 		listRuns() {
 			const out = new Map<RunId, RunSummary>();
 			for (const name of subdirectories(runsDir)) {
@@ -468,6 +519,9 @@ export const createRunRegistry = (opts: RunRegistryOptions): RunRegistry => {
 			const dir = auditDir(auditId);
 			return existsSync(dir) ? auditSummaryOfDir(auditId, dir, logger) : undefined;
 		},
+		// Subscriptions are accepted only while running; callers use the undefined return to switch
+		// to replay (SSE) or to an immediate read (MCP).
+		// 只在运行中接受订阅；调用方用返回的 undefined 切换到回放（SSE）或立即读取（MCP）。
 		subscribe(runId, handler) {
 			const entry = runs.get(runId);
 			if (entry === undefined || entry.status !== "running") return undefined;
