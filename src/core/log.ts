@@ -1,3 +1,10 @@
+// EventLog implementations: SqliteEventLog (bun:sqlite, WAL, one transaction per tick) and
+// MemoryEventLog for embedding and tests. Both answer query, batchesOf, chain and digest
+// identically; digest hashes events in (t, eventId) order regardless of insertion order.
+// EventLog 的两个实现：SqliteEventLog（bun:sqlite、WAL、每 tick 一个事务）与用于嵌入和测试的
+// MemoryEventLog。两者的 query、batchesOf、chain 与 digest 行为一致；digest 按 (t, eventId) 排序后哈希，
+// 与插入顺序无关。
+
 import { Database } from "bun:sqlite";
 import { mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -37,6 +44,9 @@ const PROVENANCES: readonly Provenance[] = [
 
 const isProvenance = (s: string): s is Provenance => (PROVENANCES as readonly string[]).includes(s);
 
+// chain() walks parents up to the root and children breadth-first downward, deduplicates,
+// then sorts into the global order so callers read it as a timeline.
+// chain() 沿 parent 向上走到根，再广度优先向下收集子事件，去重后按全序排序，调用方读到的是一条时间线。
 const upward = (start: Event, byId: (id: EventId) => Event | undefined): Event[] => {
 	const out: Event[] = [];
 	const seen = new Set<EventId>([start.eventId]);
@@ -123,6 +133,9 @@ const whereOf = (filter: EventFilter): SqlWhere => {
 	return { clauses, params };
 };
 
+// Batch events have no agent_id column; membership is tested inside the JSON payload with
+// json_each, the SQLite counterpart of includes() in the memory log.
+// 批量事件没有 agent_id 列；成员关系用 json_each 在 JSON payload 内部判断，对应内存日志里的 includes()。
 const BATCH_MEMBER_CLAUSE =
 	"EXISTS (SELECT 1 FROM json_each(events.payload, '$.agentIds') WHERE json_each.value = ?)";
 
@@ -174,6 +187,9 @@ const fromRow = (r: EventRow): Event => {
 	return event as Event;
 };
 
+// Indexes mirror the access paths: time order for query and digest, (agent, tick) for agent
+// history, kind for scans, parent for chain().
+// 索引对应访问路径：时间序供 query 与 digest，(agent, tick) 供 agent 历史，kind 供扫描，parent 供 chain()。
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS events (
 	event_id TEXT PRIMARY KEY,
@@ -233,6 +249,10 @@ class SqliteEventLog implements EventLog {
 		this.insertEvent.run(toRow(e));
 	}
 
+	// One transaction per tick keeps a 100k-agent tick from paying a sync per event; close
+	// commits an open batch so a crash mid-tick loses at most that tick.
+	// 每 tick 一个事务，十万 agent 的 tick 不必每条事件同步一次；close 会提交未完成的批次，
+	// tick 中途崩溃最多丢失该 tick。
 	beginTick(): void {
 		if (this.inTick) throw new Error("beginTick called while a tick batch is open");
 		this.db.exec("BEGIN");
@@ -285,6 +305,9 @@ class SqliteEventLog implements EventLog {
 		return rows.map(fromRow);
 	}
 
+	// query_only is toggled around user SQL so the read-only contract is enforced by SQLite
+	// itself rather than by inspecting the statement text.
+	// 在用户 SQL 前后切换 query_only，只读契约由 SQLite 自身强制，而不是靠检查语句文本。
 	sql<T>(sql: string, params: readonly (string | number)[] = []): readonly T[] {
 		this.db.exec("PRAGMA query_only = 1");
 		try {
@@ -305,6 +328,8 @@ class SqliteEventLog implements EventLog {
 	}
 
 	digest(): string {
+		// Rows are streamed into the hasher; a 2M-event log never materialises as one array.
+		// 行以流的方式喂给哈希器；两百万事件的日志不会整体载入一个数组。
 		const rows = this.db.query<EventRow, []>(`SELECT * FROM events ${ORDER}`);
 		const events = (function* () {
 			for (const row of rows.iterate()) yield fromRow(row);
@@ -378,6 +403,8 @@ class MemoryEventLog implements EventLog {
 		);
 	}
 
+	// No SQL engine behind the memory log: warn and return nothing rather than fail the caller.
+	// 内存日志背后没有 SQL 引擎：记 warn 并返回空，而不是让调用方失败。
 	sql<T>(sql: string): readonly T[] {
 		this.logger.warn("MemoryEventLog does not support sql()", { sql });
 		return [];

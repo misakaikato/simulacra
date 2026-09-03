@@ -1,3 +1,9 @@
+// Zod schemas for every document the kernel accepts: scenario, audit plan and checkpoint files.
+// The types in types.ts are inferred from these, so YAML, API and MCP validate against one
+// definition, and every default lives here rather than in code paths.
+// 内核接受的所有文档的 zod schema：场景、审计计划与检查点文件。types.ts 的类型由此推导，YAML、API 与
+// MCP 三处校验同源，所有默认值都定义在这里而不是散落在代码路径中。
+
 import { z } from "zod";
 import { MAP_KEY, PARAM_KEY, describeParamError, resolveParamRefs } from "./params";
 import type { JsonObject, JsonValue, Scalar } from "./types";
@@ -66,6 +72,7 @@ export const PopulationSpecSchema = z.object({ n: PopulationSize, ...PopulationF
 
 // In a scenario document the population size may reference a scenario param;
 // the reference is resolved while the scenario is parsed so that Scenario.population.n is a number.
+// 场景文档里的人口规模可以引用场景参数；引用在解析时求值，Scenario.population.n 因此始终是数字。
 const PopulationSpecInputSchema = z.object({
 	n: z.union([PopulationSize, ParamRefSchema]),
 	...PopulationFields,
@@ -86,6 +93,10 @@ export const InstrumentSpecSchema = PluginSpecSchema.extend({
 	every: z.number().int().positive().optional(),
 });
 
+// Operator objects are strict so a where value such as { gt: 1, typo: 2 } is rejected instead
+// of silently degrading to an equality test against the object.
+// 操作符对象是 strict 的，形如 { gt: 1, typo: 2 } 的 where 值会被拒绝，而不是悄悄退化成对整个
+// 对象的相等测试。
 export const SelectorPredicateSchema = z.union([
 	z.strictObject({ in: z.array(ScalarSchema) }),
 	z.strictObject({ gt: z.number() }),
@@ -114,6 +125,9 @@ export const StepSchema = z.discriminatedUnion("kind", [
 	z.object({ kind: z.literal("checkpoint") }),
 ]);
 
+// Defaults are the DeepSeek preset; prefault({}) on nested blocks makes an absent llm section
+// valid so a minimal scenario is complete.
+// 默认值即 DeepSeek 预设；嵌套块上的 prefault({}) 使省略 llm 段也合法，最小场景因此完整。
 export const LLMSpecSchema = z.object({
 	baseUrl: z.string().min(1).default("https://api.deepseek.com/v1"),
 	model: z.string().min(1).default("deepseek-v4-flash"),
@@ -212,6 +226,10 @@ type ScenarioOutput = Omit<ScenarioInput, "population"> & {
 
 const POPULATION_SIZE_PATH = ["population", "n"];
 
+// A failed reference is reported at population.n; the placeholder n: 0 only exists to keep
+// the transform total, zod discards the value once an issue is added.
+// 引用失败在 population.n 处报告；占位的 n: 0 只是为了让 transform 保持全函数，添加 issue 后
+// zod 会丢弃该值。
 const resolvePopulationSize = (scenario: ScenarioInput, ctx: z.RefinementCtx): ScenarioOutput => {
 	const { n, ...population } = scenario.population;
 	if (typeof n === "number") return { ...scenario, population: { ...population, n } };
@@ -235,6 +253,9 @@ const resolvePopulationSize = (scenario: ScenarioInput, ctx: z.RefinementCtx): S
 	return { ...scenario, population: { ...population, n: 0 } };
 };
 
+// population.n = { $param } is resolved during parsing, the one point where params are
+// certainly known; a later override of params.n does not re-derive it.
+// population.n = { $param } 在解析时求值，那是唯一能确定 params 的时刻；之后覆盖 params.n 不会重新派生。
 export const ScenarioSchema = ScenarioObjectSchema.transform(resolvePopulationSize);
 
 export const PerturbationAxisSchema = z.object({

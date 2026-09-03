@@ -1,3 +1,9 @@
+// $param references in plugin options: { $param: name, map? } is replaced by
+// scenario.params[name] (optionally through map) before plugins are constructed, so a harness
+// axis pointing at a param reaches every plugin that reads it.
+// 插件选项里的 $param 引用：{ $param: name, map? } 在插件构造前被替换为 scenario.params[name]
+//（可经 map 映射），harness 指向某个参数的轴因此能作用到所有读取它的插件。
+
 import { err, ok } from "./result";
 import type { JsonObject, JsonValue, PluginSpec, Result, Scenario } from "./types";
 
@@ -22,6 +28,9 @@ const mapKeyOf = (value: JsonValue): string | undefined =>
 		? String(value)
 		: undefined;
 
+// map turns a param value into an option value by string key, letting one numeric or enum
+// param drive options of a different type.
+// map 按字符串键把参数值映射成选项值，一个数值或枚举参数可以驱动不同类型的选项。
 const resolveRef = (
 	ref: JsonObject,
 	params: JsonObject,
