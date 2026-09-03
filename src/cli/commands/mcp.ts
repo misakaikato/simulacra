@@ -1,3 +1,9 @@
+// `simulacra mcp`: serves the MCP tools and resources over stdio with a run registry on --data.
+// Logs go to stderr because stdout is the MCP transport; the command returns when the client
+// closes the connection.
+// `simulacra mcp`：以 --data 上的运行注册表通过 stdio 提供 MCP 工具与资源。
+// 日志写到 stderr，因为 stdout 就是 MCP 传输通道；客户端关闭连接后命令返回。
+
 import { resolve } from "node:path";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { defineCommand } from "citty";

@@ -1,3 +1,9 @@
+// Helpers shared by every CLI command: CliError and fail() as the single error path, print(),
+// argument coercions (integer, positive, non-negative, log level, llm mode) and the scan of
+// the raw argument list for --plugin.
+// 所有 CLI 命令共用的辅助：作为单一错误通路的 CliError 与 fail()、print()、参数转换
+//（整数、正数、非负数、日志级别、llm 模式），以及对原始参数列表里 --plugin 的扫描。
+
 import { isLogLevel, type LLMSpec, type LogLevel } from "../../index";
 
 export class CliError extends Error {
@@ -17,6 +23,10 @@ export const print = (line: string): void => {
 
 const MISSING_PLUGIN = "missing plugin path";
 
+// --plugin is scanned from rawArgs so it can be repeated; the citty args declare it as a single
+// string. Both `--plugin x` and `--plugin=x` are accepted, an empty or flag-like value fails.
+// --plugin 从 rawArgs 扫描以便重复给出；citty 的参数声明只把它当单个字符串。
+// `--plugin x` 与 `--plugin=x` 都接受，空值或像另一个标志的值直接失败。
 export const pluginPathsOf = (rawArgs: readonly string[]): readonly string[] => {
 	const paths: string[] = [];
 	for (const [i, arg] of rawArgs.entries()) {
@@ -69,6 +79,9 @@ export const llmModeArg = (value: string | undefined): LLMSpec["mode"] | undefin
 	return mode;
 };
 
+// Mirrors --log-level parsing without citty so the top-level catch can still decide whether to
+// print a stack when argument parsing itself is what failed.
+// 不经 citty 复刻 --log-level 的解析，使最外层 catch 在参数解析本身失败时也能决定是否打印栈。
 export const wantsDebug = (rawArgs: readonly string[]): boolean =>
 	rawArgs.includes("--log-level=debug") ||
 	rawArgs.includes("--log-level=trace") ||

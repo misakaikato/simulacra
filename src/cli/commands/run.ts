@@ -1,3 +1,8 @@
+// `simulacra run`: loads a scenario file, applies the command-line overrides and calls the public
+// runScenario; prints the summary and the log digest, and exits non-zero when the run failed.
+// `simulacra run`：加载场景文件，套用命令行覆盖后调用公共 runScenario；打印摘要与日志摘要值，
+// 运行失败时以非零退出码结束。
+
 import { existsSync } from "node:fs";
 import { defineCommand } from "citty";
 import { digest, loadScenario, runScenario, type RunResult } from "../../index";
@@ -13,6 +18,8 @@ import {
 	print,
 } from "./shared";
 
+// Shared with `resume` so both commands print the same five lines.
+// 与 resume 共用，两个命令输出同样的五行。
 export const summarize = (result: RunResult, outDir: string): readonly string[] => {
 	const i = result.integrity;
 	const c = result.cost;
@@ -54,6 +61,10 @@ export const runCommand = defineCommand({
 		"checkpoint-every": { type: "string", description: "write a checkpoint every N ticks" },
 	},
 	run: async ({ args, rawArgs }) => {
+		// loadScenario treats a path that does not exist as inline YAML text, so a missing file is
+		// caught here by its extension to report file-not-found instead of a YAML parse error.
+		// loadScenario 把不存在的路径当作内联 YAML 文本，因此按扩展名在此拦截缺失的文件，
+		// 报“文件不存在”而不是 YAML 解析错误。
 		if (/\.(ya?ml|json)$/i.test(args.scenario) && !existsSync(args.scenario))
 			return fail(`${args.scenario}: file not found`);
 		const loaded = loadScenario(args.scenario);
@@ -77,6 +88,10 @@ export const runCommand = defineCommand({
 			...(every === undefined ? {} : { checkpointEvery: every }),
 			...(logLevel === undefined ? {} : { logLevel }),
 		});
+		// A run that failed mid-way still wrote result.json and a log, so the summary and digest
+		// are printed before the non-zero exit; only a run that could not start skips them.
+		// 中途失败的运行同样写了 result.json 与日志，所以摘要与摘要值先打印再非零退出；
+		// 只有根本没能启动的运行才跳过它们。
 		if (!result.ok) return fail(describeFailure(result.error));
 		for (const line of summarize(result.value, args.out)) print(line);
 		const sha = digest(args.out);
