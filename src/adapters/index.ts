@@ -1,3 +1,8 @@
+// Registration entry and public surface of the built-in adapters: `script` is the bare process
+// contract, `oasis` layers database import and metric computation on top of it.
+// 内置适配器的注册入口与公开出口：`script` 是裸的进程契约，
+// `oasis` 在其之上叠加数据库导入与指标计算。
+
 import { z } from "zod";
 import type { Adapter, DuplicatePlugin, PluginFactory, Registry } from "../core/protocols";
 import { parseOptions } from "../core/registry";
@@ -51,6 +56,10 @@ const ScriptOptions = z.object({
 	timeoutMs: z.number().int().positive().optional(),
 });
 
+// `metrics` accepts plain names or full InstrumentSpecs (appendix E); the CLI only passes names,
+// so metrics that need options must come through the API or a scenario.
+// `metrics` 接受纯名字或完整的 InstrumentSpec（附录 E）；CLI 只传名字，
+// 需要选项的指标必须走 API 或场景。
 const OasisOptions = ScriptOptions.extend({
 	metrics: z.array(z.union([z.string().min(1), InstrumentSpecSchema])).default([]),
 	dbFile: z.string().min(1).optional(),

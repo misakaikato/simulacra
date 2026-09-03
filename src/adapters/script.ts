@@ -1,3 +1,11 @@
+// Script adapter: the process contract for external frameworks. The scenario is written to
+// config.json, the script is spawned as `argv --config cfg.json --seed N --out dir`, and its
+// result.json is validated into a RunResult; a non-zero exit, timeout or missing result becomes
+// a FailureInfo rather than an exception, so the harness treats it like any other failed run.
+// 脚本适配器：接入外部框架的进程契约。场景写成 config.json，脚本以
+// `argv --config cfg.json --seed N --out dir` 启动，其 result.json 校验后转成 RunResult；
+// 非零退出、超时或缺少结果都转成 FailureInfo 而不是异常，harness 把它当普通失败 run 处理。
+
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Subprocess } from "bun";
@@ -53,6 +61,10 @@ export const ScriptCostSchema = z.object({
 	wallMs: counter,
 });
 
+// Every counter defaults to 0 and `status` may be omitted: a script that only writes metrics
+// still yields a valid, complete result, and one that writes `failure` is failed by default.
+// 所有计数器默认 0，`status` 可省略：只写指标的脚本也能得到合法且完整的结果，
+// 写了 `failure` 的脚本默认判为失败。
 export const ScriptResultSchema = z.object({
 	status: z.enum(["succeeded", "failed"]).optional(),
 	failure: ScriptFailureSchema.optional(),
@@ -111,6 +123,10 @@ const failureInfoOf = (f: z.output<typeof ScriptFailureSchema>): FailureInfo => 
 	...(f.at === undefined ? {} : { at: f.at }),
 });
 
+// `complete` defaults to the run's success and the adapter's own wall time fills in when the
+// script reports none, so integrity and cost summaries never carry holes.
+// `complete` 默认等于 run 是否成功，脚本未报 wallMs 时用适配器自己计的时间补上，
+// 完整性与成本汇总因此不会出现空洞。
 export const scriptResultToRunResult = (
 	scenario: Scenario,
 	outDir: string,
@@ -222,7 +238,12 @@ const spawnScript = (
 };
 
 // Writes config.json, runs the script and stores its output in script.log; result.json is not read here
+// 写 config.json、运行脚本并把输出存进 script.log；此处不读 result.json
 
+// The seed passed by the harness overrides the scenario's own so replications differ only by
+// seed; stdout and stderr are drained concurrently with `exited` to avoid pipe deadlock.
+// harness 传入的种子覆盖场景自带的种子，复制之间只差种子；
+// stdout 与 stderr 和 `exited` 并发读取，避免管道死锁。
 export const executeScript = async (
 	options: ScriptAdapterOptions,
 	scenario: Scenario,
@@ -281,6 +302,10 @@ export const runScript = async (
 	return readScriptResult(executed.scenario, outDir, executed.wallMs);
 };
 
+// A foreign config that already is a scenario passes through; anything else is wrapped into a
+// minimal scenario under params.external so the harness can still hash, perturb and replicate.
+// 已经是场景的外部配置直接通过；其它形态包进最小场景的 params.external，
+// harness 仍能对它哈希、扰动与复制。
 export const externalToScenario = (name: string, external: JsonValue): Result<Scenario, string> => {
 	if (isObject(external)) {
 		const direct = parseScenario(external);
