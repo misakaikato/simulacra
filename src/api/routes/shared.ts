@@ -1,3 +1,9 @@
+// Helpers shared by the route modules: the ApiDeps bag, page limits, coerced query-number
+// schemas, the issues[] and error envelopes, JSON body reading and the lookup that maps a
+// POSTed YAML text back to the built-in example directory it was copied from.
+// 各路由模块共用的辅助：ApiDeps、分页上限、查询参数数字转换 schema、issues[] 与 error 信封、
+// JSON 请求体读取，以及把 POST 的 YAML 文本映射回其所来自的内置示例目录的查找。
+
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type { Context } from "hono";
@@ -26,6 +32,10 @@ export const MAX_PAGE = 1000;
 export const nonNegativeInt = z.coerce.number().int().nonnegative();
 export const positiveInt = z.coerce.number().int().positive();
 
+// zod paths are arrays; the contract flattens them to dotted strings, with an optional prefix
+// naming the body field (scenario, plan) that a nested parser validated.
+// zod 的 path 是数组；契约把它压成点分字符串，可选前缀指明嵌套解析器校验的是哪个请求体字段
+//（scenario、plan）。
 export const issuesOf = (
 	issues: readonly { readonly path: readonly PropertyKey[]; readonly message: string }[],
 	prefix = "",
@@ -50,6 +60,10 @@ export const readJsonBody = async (c: Context): Promise<Result<unknown, readonly
 	}
 };
 
+// A POSTed document identical to a built-in example resolves its relative paths (plugins,
+// recordings) against that example's directory; anything else resolves against the server cwd.
+// 与内置示例逐字相同的 POST 文档，其相对路径（插件、录制）按该示例目录解析；
+// 其它按服务进程的 cwd 解析。
 export const exampleDirOf = (text: string, file: ExampleFile): string | undefined => {
 	for (const name of listExamples()) {
 		const dir = dirname(examplePath(name));

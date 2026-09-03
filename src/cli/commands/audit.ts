@@ -1,3 +1,9 @@
+// `simulacra audit`: loads an audit plan, runs it through the harness with the kernel run
+// function and prints the report summary. The JSONL log sink opens lazily so the runner's
+// empty-directory check still sees an empty output directory.
+// `simulacra audit`：加载审计计划，用内核运行函数交给 harness 执行并打印报告摘要。
+// JSONL 日志 sink 延迟打开，使 runner 的空目录检查仍能看到空的输出目录。
+
 import { join } from "node:path";
 import { defineCommand } from "citty";
 import {
@@ -25,6 +31,7 @@ import {
 export const AUDIT_LOG_FILE = "log.jsonl";
 
 // Opens the file on the first record so the output directory stays empty until the runner has checked it
+// 首条记录才打开文件，输出目录在 runner 检查完之前保持为空
 const lazyJsonlSink = (path: string): LogSink => {
 	let inner: LogSink | undefined;
 	return {
@@ -93,6 +100,11 @@ export const auditCommand = defineCommand({
 		const sink = lazyJsonlSink(join(args.out, AUDIT_LOG_FILE));
 		const logger = createLogger({ level: logLevel ?? levelFromEnv(), sinks: [sink] });
 		try {
+			// providerOverride goes to both places on purpose: kernelRunFn applies it to every run,
+			// the audit options record it in the report so a reader knows which provider produced
+			// the numbers.
+			// providerOverride 有意传两处：kernelRunFn 让它作用于每次运行，audit 选项把它记进报告，
+			// 读者才知道数字出自哪个 provider。
 			const result = await audit(
 				loaded.value,
 				kernelRunFn({

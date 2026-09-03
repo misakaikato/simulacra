@@ -1,3 +1,7 @@
+// Small presentational building blocks shared by pages and components: error bar, loading and
+// empty placeholders, run status and event kind badges.
+// 页面与组件共用的小型展示件：错误条、加载与空态占位、运行状态与事件种类徽章。
+
 import type { EventKind } from "../../../src/core/types";
 import type { RunStatus } from "../api";
 

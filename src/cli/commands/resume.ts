@@ -1,3 +1,8 @@
+// `simulacra resume`: continues a run from a checkpoint directory for N more ticks into a new
+// output directory; the scenario and its plugins come from the original run directory.
+// `simulacra resume`：从检查点目录继续运行 N 个 tick，写入新的输出目录；
+// 场景与其插件取自原运行目录。
+
 import { defineCommand } from "citty";
 import { digest, resume } from "../../index";
 import { summarize } from "./run";

@@ -1,3 +1,8 @@
+// `simulacra inspect`: prints one agent's causal chain at a tick or around an anchor event,
+// rendered by the same renderInspect the MCP get_agent_trace tool uses.
+// `simulacra inspect`：打印某个 agent 在指定 tick 或围绕锚定事件的因果链，
+// 渲染与 MCP 的 get_agent_trace 工具共用 renderInspect。
+
 import { defineCommand } from "citty";
 import { inspect, renderInspect, toEntityId, toEventId } from "../../index";
 import { fail, integerArg, print } from "./shared";

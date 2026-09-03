@@ -1,3 +1,11 @@
+// Stand-in API server for GUI development without the kernel: `bun run dev:mock` serves the
+// same routes and envelopes as src/api on port 8787, backed by in-memory runs that advance one
+// tick per second, one finished audit and one running audit. All randomness comes from a
+// seeded PRNG, so the mock data is identical on every start.
+// 不依赖内核做 GUI 开发的替身 API 服务：`bun run dev:mock` 在 8787 端口提供与 src/api 相同的
+// 路由与信封，背后是每秒推进一个 tick 的内存运行、一个已完成审计与一个运行中审计。
+// 所有随机数来自带种子的 PRNG，每次启动的模拟数据完全相同。
+
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import type {
@@ -58,6 +66,10 @@ const NAMES = [
 	"Zed",
 ];
 
+// mulberry32, a tiny seeded generator: Math.random is banned repo-wide and the mock must be
+// reproducible so screenshots and manual checks compare across restarts.
+// mulberry32，一个极小的带种子生成器：仓库全域禁用 Math.random，而替身必须可复现，
+// 截图与人工检查才能跨重启对比。
 const seeded = (seed: number): (() => number) => {
 	let s = seed >>> 0;
 	return () => {
@@ -84,6 +96,8 @@ const fakeSha = (text: string): string => {
 	return `${a}${b}`.repeat(4);
 };
 
+// Counter-based ULID look-alikes: short, sortable and stable across restarts.
+// 基于计数器的仿 ULID：短、可排序、跨重启稳定。
 const ALPHABET = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
 let counter = 0;
 const nextId = (): string => {
@@ -180,6 +194,9 @@ const createRun = (
 		failures: 0,
 		degree: 0,
 	}));
+	// A preferential-attachment sketch: 60% of new edges attach to an endpoint drawn from the
+	// existing edge list, so degrees spread the way a real follow graph does.
+	// 偏好依附的草图：六成新边接到从现有边列表抽出的端点上，度数分布像真实的关注图。
 	const edges: GraphEdge[] = [];
 	const endpoints: number[] = [];
 	for (let i = 1; i < n; i++) {
@@ -292,6 +309,12 @@ const finish = (run: MockRun, status: "succeeded" | "failed"): void => {
 	run.subscribers.clear();
 };
 
+// One tick of a fake run: activation, then per active agent observation, llm_call, an
+// occasional failure, decision and effect with parent links so /chain works, then module_step,
+// measurements and a checkpoint every 5 ticks. A run with failAt stops with a failure event.
+// 假运行的一个 tick：先 activation，再对每个激活的 agent 依次 observation、llm_call、
+// 偶发的 failure、decision 与 effect，并带 parent 链接使 /chain 可用，然后 module_step、
+// 各测量，每 5 个 tick 一个 checkpoint。带 failAt 的运行以 failure 事件收场。
 const advance = (run: MockRun): void => {
 	const tick = run.tick;
 	let seq = 0;
@@ -529,6 +552,8 @@ const eventsPage = (run: MockRun, params: URLSearchParams): readonly SimEvent[] 
 const compareTime = (a: LogicalTime, b: LogicalTime): number =>
 	a.tick - b.tick || a.substep - b.substep || a.seq - b.seq;
 
+// Ancestors by parent links, then descendants by depth-first walk, like the real EventLog.chain.
+// 先沿 parent 链接取祖先，再深度优先取后代，与真实的 EventLog.chain 一致。
 const chainOf = (run: MockRun, id: EventId): readonly SimEvent[] | undefined => {
 	const anchor = run.byId.get(id);
 	if (anchor === undefined) return undefined;
@@ -553,6 +578,10 @@ const chainOf = (run: MockRun, id: EventId): readonly SimEvent[] | undefined => 
 	return [...out.values()].sort((a, b) => compareTime(a.t, b.t));
 };
 
+// Finished runs are replayed and closed at once; running ones register a subscriber that
+// broadcast() feeds and finish() closes, mirroring the two paths of src/api/sse.ts.
+// 已结束的运行立刻回放并关闭；运行中的注册一个订阅者，由 broadcast() 投喂、finish() 关闭，
+// 与 src/api/sse.ts 的两条路径对应。
 const stream = (run: MockRun): Response => {
 	const encoder = new TextEncoder();
 	let subscriber: Subscriber | undefined;
@@ -618,6 +647,8 @@ const baseScenario = (scenarioId: string, seed: number, n: number): Scenario => 
 	},
 });
 
+// Step-down Holm on the mock p-values so the highlighted rows behave like the real report.
+// 对模拟 p 值做 Holm 逐步下降校正，高亮行的表现与真实报告一致。
 const holmCorrect = (tests: readonly PairwiseTest[]): readonly PairwiseTest[] => {
 	const order = [...tests].sort((x, y) => x.mwuP - y.mwuP);
 	const adjusted = new Map<string, number>();
@@ -872,6 +903,11 @@ const seedRun = (run: MockRun, ticksToAdvance: number): void => {
 	for (let i = 0; i < ticksToAdvance && run.status === "running"; i++) advance(run);
 };
 
+// The seeded runs cover the states the GUI must render: a finished echo chamber, a finished
+// prisoner's dilemma, one still at tick 0, a 6000-agent graph that triggers node sampling and
+// one that fails at tick 4.
+// 预置的运行覆盖 GUI 必须渲染的状态：已结束的回声室、已结束的囚徒困境、仍在 tick 0 的、
+// 触发节点采样的 6000 agent 图，以及在 tick 4 失败的。
 seedRun(createRun("echo_chamber", 0, 7, 100, 15, ECHO), 15);
 seedRun(createRun("prisoners_dilemma", 0, 1, 2, 10, PD), 10);
 seedRun(createRun("echo_chamber", 1, 8, 100, 40, ECHO), 0);
@@ -901,6 +937,9 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
 const json = (data: unknown, status = 200): Response => Response.json(data, { status });
 const notFound = (what: string): Response => json({ error: `${what} not found` }, 404);
 
+// Validation mirrors NewRunSchema's messages; scenarioId and n are scraped from the YAML with
+// regexes, enough to name the run and size its graph.
+// 校验复刻 NewRunSchema 的提示语；scenarioId 与 n 用正则从 YAML 里抠出来，够给运行命名和定图的大小。
 const createFromRequest = async (req: Request): Promise<Response> => {
 	const body: unknown = await req.json().catch(() => undefined);
 	const issues: { readonly path: readonly string[]; readonly message: string }[] = [];

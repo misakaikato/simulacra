@@ -1,3 +1,11 @@
+// MCP server over stdio: the tools mirror the CLI (list_examples, run_scenario, get_run,
+// query_events, get_agent_trace, run_audit, get_audit, doctor) and two resource templates
+// expose the full run result and audit report. Every tool validates its input with zod and
+// answers with readable lines followed by JSON; run_scenario and run_audit wait for completion.
+// stdio 上的 MCP 服务：工具与 CLI 对应（list_examples、run_scenario、get_run、query_events、
+// get_agent_trace、run_audit、get_audit、doctor），两个资源模板暴露完整的运行结果与审计报告。
+// 每个工具用 zod 校验输入，以可读文本加 JSON 作答；run_scenario 与 run_audit 等到完成才返回。
+
 import { dirname, join } from "node:path";
 import { McpServer, ResourceTemplate } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
@@ -50,6 +58,10 @@ type ToolText = CallToolResult;
 const ProviderSchema = z.enum(["mock", "llm"]);
 const RunIdSchema = z.string().min(1);
 
+// Tool output is text for the model followed by the same data as JSON; failures set isError and
+// echo the issues so a client can show them like the HTTP 400 body.
+// 工具输出是给模型读的文本加同一份数据的 JSON；失败设 isError 并附上 issues，
+// 客户端可以像展示 HTTP 400 请求体那样展示。
 const render = (lines: readonly string[], json: unknown): ToolText => ({
 	content: [{ type: "text", text: `${lines.join("\n")}\n\n${JSON.stringify(json, null, "\t")}` }],
 });
@@ -104,6 +116,10 @@ const runJson = (summary: RunSummary): unknown => ({
 	resource: runUri(summary.runId),
 });
 
+// get_audit returns the report without per-run results and the run index to keep tool output
+// small; the full AuditReport is served by the audit-report resource.
+// get_audit 返回的报告去掉逐运行结果与运行索引以控制工具输出体积；
+// 完整的 AuditReport 走 audit-report 资源。
 const condensedReport = (report: AuditReport): unknown => ({
 	planHash: report.planHash,
 	evidenceGrade: report.evidenceGrade,
@@ -166,6 +182,10 @@ const describeAuditError = (e: StartAuditError): Issue => {
 	}
 };
 
+// Waiting is subscription based: a subscribe that returns undefined means the run already
+// ended, so the summary is read at once instead of waiting for a done message that never comes.
+// 等待基于订阅：subscribe 返回 undefined 表示运行已结束，此时立刻读取摘要，
+// 而不是等待永远不会到来的 done 消息。
 const awaitRun = (registry: RunRegistry, runId: RunId): Promise<RunSummary | undefined> =>
 	new Promise((resolve) => {
 		const unsubscribe = registry.subscribe(runId, (message) => {
@@ -186,6 +206,9 @@ export const createMcpServer = (opts: McpServerOptions): McpServer => {
 	const { registry } = opts;
 	const logger = opts.logger.child({ component: "mcp" });
 	const server = new McpServer({ name: "simulacra", version });
+	// Resource template variables arrive percent-encoded (runIds contain a colon); a value that
+	// fails to decode is logged and used verbatim rather than turned into a crash.
+	// 资源模板变量以百分号编码到达（runId 含冒号）；解码失败的值记日志后原样使用，不让它变成崩溃。
 	const variable = (value: string | string[] | undefined): string => {
 		const raw = Array.isArray(value) ? (value[0] ?? "") : (value ?? "");
 		try {
@@ -244,6 +267,13 @@ export const createMcpServer = (opts: McpServerOptions): McpServer => {
 				return failure(`unknown example '${args.example}'`, [
 					{ path: "example", message: `known examples: ${listExamples().join(", ")}` },
 				]);
+			// Exactly one of scenarioYaml or example: the example path keeps relative plugin
+			// and recording paths resolvable, inline YAML resolves against the server cwd.
+			// The runId rule matches POST /api/runs: <name>:0, or <scenarioId>-s<seed>:0
+			// without a name.
+			// scenarioYaml 与 example 二选一：走示例路径可以解析相对的插件与录制路径，
+			// 内联 YAML 按服务进程 cwd 解析。runId 规则与 POST /api/runs 相同：<name>:0，
+			// 未给 name 时为 <scenarioId>-s<seed>:0。
 			const loaded = loadScenario(
 				args.example === undefined ? (args.scenarioYaml ?? "") : examplePath(args.example),
 			);
@@ -363,6 +393,10 @@ export const createMcpServer = (opts: McpServerOptions): McpServer => {
 						message: `known examples: ${listExamples().join(", ")}`,
 					},
 				]);
+			// examplePlan reads the audit.yaml next to the example's scenario.yaml, so the plan's
+			// base path resolves; inline planYaml resolves against the server cwd.
+			// examplePlan 读取示例 scenario.yaml 旁边的 audit.yaml，计划里的 base 路径才能解析；
+			// 内联 planYaml 按服务进程 cwd 解析。
 			const plan =
 				args.examplePlan === undefined
 					? parseAuditPlanYaml(args.planYaml ?? "", {
@@ -418,6 +452,11 @@ export const createMcpServer = (opts: McpServerOptions): McpServer => {
 		},
 	);
 
+	// Resource handlers throw on unknown ids because the SDK maps thrown errors to the protocol
+	// error response; tools return isError instead. The list callbacks enumerate the registry so
+	// a client can discover runs and audits without calling a tool first.
+	// 资源处理器对未知 id 直接抛出，因为 SDK 会把异常映射成协议错误响应；工具则返回 isError。
+	// list 回调枚举注册表，客户端不必先调用工具就能发现运行与审计。
 	server.registerResource(
 		"run-result",
 		new ResourceTemplate(RUN_RESULT_TEMPLATE, {

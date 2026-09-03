@@ -1,3 +1,10 @@
+// Kernel throughput bench: runs the echo chamber with 1 000 focal agents on the mock provider
+// and the 100 000-agent cohort variant on its rule provider, 20 ticks each, then upserts the
+// table into bench/RESULTS.md. Runs in a temp directory that is removed afterwards.
+// 内核吞吐基准：分别以 mock provider 跑 1000 个 focal agent 的回声室、以其 rule provider 跑
+// 十万 agent 的 cohort 变体，各 20 tick，然后把表格 upsert 进 bench/RESULTS.md。
+// 在临时目录里运行，结束后删除。
+
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -14,6 +21,8 @@ import {
 } from "../src/index";
 import { RESULTS_FILE, metaLines, writeSection } from "./results";
 
+// A machine-wide HTTP proxy would swallow Bun's localhost requests; NO_PROXY keeps them local.
+// 机器级 HTTP 代理会吞掉 Bun 对 localhost 的请求；NO_PROXY 让它们留在本机。
 process.env.NO_PROXY ??= "127.0.0.1,localhost";
 
 interface BenchRow {
@@ -38,6 +47,9 @@ const load = (file: string): Scenario => {
 	return loaded.value;
 };
 
+// The digest is recorded next to the timing so a performance change that alters the event log
+// is visible in the same table.
+// 摘要值与耗时并排记录，改变了事件日志的性能改动在同一张表里就能看出来。
 const bench = async (
 	name: string,
 	scenario: Scenario,

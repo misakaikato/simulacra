@@ -1,3 +1,9 @@
+// Hono routes for runs: list, create, summary, events, causal chain, content, agents, graph and
+// metrics; every handler reads through the run registry and the public API (withRunLog,
+// replayWorld), never through core modules.
+// 运行相关的 Hono 路由：列表、创建、摘要、事件、因果链、大文本、agent、图与指标；
+// 所有处理器都经运行注册表与公共 API（withRunLog、replayWorld）读取，绝不直接碰内核模块。
+
 import { Hono } from "hono";
 import { z } from "zod";
 import {
@@ -65,6 +71,7 @@ interface AgentCount {
 }
 
 // Per-agent decision and failure events, plus one decision per appearance in a decision_batch
+// 每个 agent 的 decision 与 failure 事件数，外加在 decision_batch 里每出现一次记一个 decision
 const AGENT_COUNTS_SQL = `
 SELECT agent_id, kind, COUNT(*) AS n FROM events
 WHERE agent_id IS NOT NULL AND kind IN ('decision', 'failure') GROUP BY agent_id, kind
@@ -73,6 +80,9 @@ SELECT members.value AS agent_id, 'decision' AS kind, COUNT(*) AS n
 FROM events, json_each(events.payload, '$.agentIds') AS members
 WHERE kind = 'decision_batch' GROUP BY members.value`;
 
+// Objects are validated as-is and resolved against cwd; YAML text may be a verbatim built-in
+// example, in which case its relative paths resolve against that example directory.
+// 对象原样校验并按 cwd 解析；YAML 文本可能与某内置示例逐字相同，此时相对路径按该示例目录解析。
 const scenarioOf = (
 	raw: string | Record<string, unknown>,
 ): Result<Scenario, readonly ApiIssue[]> => {
@@ -106,6 +116,9 @@ const hiddenPersonaColumns = (scenario: Scenario): ReadonlySet<string> =>
 			.map((f) => `${PERSONA_PREFIX}${f.name}`),
 	);
 
+// Only numeric measurements enter the series: the GUI draws lines, so non-numeric values
+// (histograms, labels) stay in the events view.
+// 只有数值型测量进入序列：GUI 画的是折线，非数值（直方图、标签）留在事件视图里。
 const metricSeries = (events: readonly Event[]): MetricSeries => {
 	const series: Record<string, MetricPoint[]> = {};
 	for (const e of events) {
@@ -135,6 +148,10 @@ export const runRoutes = (deps: ApiDeps): Hono => {
 		if (!parsed.success) return badRequest(c, issuesOf(parsed.error.issues));
 		const scenario = scenarioOf(parsed.data.scenario);
 		if (!scenario.ok) return badRequest(c, scenario.error);
+		// Without a name, namedScenario rewrites scenarioId to <scenarioId>-s<seed>, so the runId
+		// (<scenarioId>:<replicationId>) differs per seed and only the same name and seed is a 409.
+		// 未给 name 时 namedScenario 把 scenarioId 改写为 <scenarioId>-s<seed>，
+		// 使 runId（<scenarioId>:<replicationId>）随种子不同，只有同名同种子才是 409。
 		const started = registry.startRun({
 			scenario: namedScenario(scenario.value, parsed.data.seed, parsed.data.name),
 			seed: parsed.data.seed,
@@ -163,6 +180,10 @@ export const runRoutes = (deps: ApiDeps): Hono => {
 		if (!query.success) return badRequest(c, issuesOf(query.error.issues));
 		const kinds = kindsOf(query.data.kind);
 		if (!kinds.ok) return badRequest(c, [kinds.error]);
+		// kind is a comma-separated list checked against the event kind catalogue; limit is clamped
+		// to MAX_PAGE on the server so a client cannot request the whole log in one page.
+		// kind 是逗号分隔的列表，逐项对照事件种类目录；limit 在服务端截到 MAX_PAGE，
+		// 客户端无法一页拉走整个日志。
 		const filter: EventFilter = {
 			...(kinds.value === undefined ? {} : { kind: kinds.value }),
 			...(query.data.agent === undefined ? {} : { agentId: toEntityId(query.data.agent) }),
@@ -201,6 +222,10 @@ export const runRoutes = (deps: ApiDeps): Hono => {
 	app.get("/:id/agents", (c) => {
 		const run = locate(c.req.param("id"));
 		if (run === undefined) return notFound(c, `unknown run ${c.req.param("id")}`);
+		// Rows come from replaying the log to the final world, so agent columns are derived, never
+		// stored; persona fields the scenario marks private are stripped before the row leaves.
+		// 行来自把日志回放到最终世界，agent 列是派生的、从不另存；
+		// 场景里标为 private 的 persona 字段在行离开服务器前剔除。
 		const scenario = readRunScenario(run.dir);
 		if (!scenario.ok) return notFound(c, scenario.error);
 		const replayed = replayWorld(run.dir);
@@ -231,6 +256,10 @@ export const runRoutes = (deps: ApiDeps): Hono => {
 		if (run === undefined) return notFound(c, `unknown run ${c.req.param("id")}`);
 		const query = GraphQuerySchema.safeParse(c.req.query());
 		if (!query.success) return badRequest(c, issuesOf(query.error.issues));
+		// replayWorld clamps a tick past the end and reports the tick actually reached; a world
+		// without an edge table yields an empty edge list rather than an error.
+		// replayWorld 把超出末尾的 tick 截到末尾并回填实际到达的 tick；
+		// 没有 edge 表的世界返回空边列表而不是报错。
 		const replayed = replayWorld(run.dir, query.data.tick);
 		if (!replayed.ok) return notFound(c, replayed.error);
 		const world = replayed.value.world;
