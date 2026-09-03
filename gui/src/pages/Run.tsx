@@ -1,3 +1,9 @@
+// Run page: four panes (timeline, network canvas, agent inspector, metrics with integrity) fed
+// by the initial REST loads and, while the run is running, by incremental SSE updates to the
+// timeline and metric series; when the stream reports done every pane reloads once.
+// 运行页：四栏（时间轴、网络画布、agent 检视、指标与完整性），先由 REST 初始加载，
+// 运行中再由 SSE 增量更新时间轴与指标序列；流报告 done 后各栏整体重载一次。
+
 import { useEffect, useMemo, useState } from "react";
 import type { EntityId, Event as SimEvent, EventKind } from "../../../src/core/types";
 import { allEvents, api, streamRun, type MetricPoint, type MetricSeries } from "../api";
@@ -12,6 +18,9 @@ import { useInterval, useLoad } from "../hooks";
 const TIMELINE_KINDS: readonly EventKind[] = ["activation", "measurement", "failure"];
 const POLL_MS = 5000;
 
+// Points arrive in tick order; one at or before the last tick is the REST load overlapping
+// the stream and is dropped.
+// 点按 tick 顺序到达；不晚于最后一个 tick 的点是 REST 加载与流重叠所致，直接丢弃。
 const appendPoint = (series: MetricSeries, name: string, point: MetricPoint): MetricSeries => {
 	const existing = series[name] ?? [];
 	const last = existing[existing.length - 1];
@@ -42,6 +51,11 @@ export const Run = ({ id }: { readonly id: string }) => {
 
 	const status = summary.data?.progress.status;
 	const reloadSummary = summary.reload;
+	// The stream is opened only while the status is running. Event ids dedupe timeline entries
+	// because the REST load and the stream may overlap; onDone bumps version so agents, graph,
+	// metrics and the inspector refetch the final state.
+	// 只在状态为 running 时打开流。时间轴条目按事件 id 去重，因为 REST 加载与流可能重叠；
+	// onDone 递增 version，让 agent、图、指标与检视器重新拉取最终状态。
 	useEffect(() => {
 		if (status !== "running") return undefined;
 		return streamRun(id, {
@@ -63,6 +77,9 @@ export const Run = ({ id }: { readonly id: string }) => {
 			onError: setStreamError,
 		});
 	}, [id, status, reloadSummary]);
+	// A 5 s summary poll backs up the stream so the header tick still advances when SSE is
+	// held back by a proxy.
+	// 每 5 秒轮询一次摘要给流兜底，SSE 被代理拦住时页头的 tick 仍会前进。
 	useInterval(reloadSummary, status === "running" ? POLL_MS : null);
 
 	const agentMap = useMemo(
@@ -70,6 +87,8 @@ export const Run = ({ id }: { readonly id: string }) => {
 		[agents.data],
 	);
 	const selectedAgent = selected === undefined ? undefined : agentMap.get(selected);
+	// Ticks in which the selected agent was activated drive the inspector's recent window.
+	// 所选 agent 被激活的 tick 决定检视器的最近事件窗口。
 	const activatedTicks = useMemo(
 		() =>
 			selected === undefined

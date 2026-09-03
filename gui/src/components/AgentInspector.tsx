@@ -1,3 +1,9 @@
+// Right pane of the run page: persona and derived columns of the selected agent, its recent
+// events (last activated ticks, or the selected tick) and, on click, the causal chain of one
+// event with prompt, rationale and response text loaded lazily from the content endpoint.
+// 运行页右栏：所选 agent 的 persona 与派生列、最近事件（最近几次激活的 tick，或所选 tick），
+// 点击后展示单个事件的因果链，提示词、理由与回复文本按需从 content 接口懒加载。
+
 import { Fragment, useEffect, useState } from "react";
 import type { Effect, EntityId, Event as SimEvent, EventId } from "../../../src/core/types";
 import { api, type AgentRow, type EventQuery } from "../api";
@@ -17,6 +23,10 @@ interface Props {
 	readonly version: number;
 }
 
+// Without a selected tick the window is the agent's last RECENT_TICKS activated ticks, so an
+// agent that acts rarely still shows history instead of an empty list.
+// 未选 tick 时窗口取该 agent 最近 RECENT_TICKS 次激活的 tick，很少行动的 agent 也有历史可看，
+// 而不是一张空列表。
 const recentQuery = (
 	agent: EntityId,
 	tick: number | undefined,
@@ -76,6 +86,9 @@ const effectText = (f: Effect): string => {
 	}
 };
 
+// Large texts are fetched only when opened; the sha stays visible so a reader can match it
+// against the event log.
+// 大文本只在展开时拉取；sha 始终可见，读者可以拿它对照事件日志。
 const ContentToggle = ({
 	runId,
 	sha,
@@ -201,6 +214,10 @@ const EventDetail = ({ runId, event }: { readonly runId: string; readonly event:
 	}
 };
 
+// The chain is sorted by logical time so it reads observation, llm_call, decision, effect
+// whatever order the endpoint returned; the anchor event is highlighted.
+// 因果链按逻辑时间排序，无论接口返回何种顺序都读作 observation、llm_call、decision、effect；
+// 锚定事件高亮。
 const ChainView = ({ runId, eventId }: { readonly runId: string; readonly eventId: EventId }) => {
 	const chain = useLoad(() => api.chain(runId, eventId), [runId, eventId]);
 	const sorted = [...(chain.data ?? [])].sort((a, b) => compareTime(a.t, b.t));
@@ -254,6 +271,9 @@ export const AgentInspector = ({ runId, agent, activatedTicks, tick, version }: 
 				: api.events(runId, recentQuery(agentId, tick, activatedTicks)),
 		[runId, agentId, tick, activatedTicks, version],
 	);
+	// version bumps when the run finishes so the recent events refetch; the opened chain resets
+	// when the agent changes because event ids belong to one agent.
+	// 运行结束时 version 递增，最近事件重新拉取；换 agent 时清掉已展开的链，因为事件 id 属于单个 agent。
 	useEffect(() => setEventId(undefined), [agentId]);
 
 	if (agent === undefined)

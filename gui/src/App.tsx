@@ -1,3 +1,10 @@
+// Root component with the hash router: #/runs, #/runs/<id> and #/audits/<id> map to the three
+// pages; ids are URL-decoded because runIds contain a colon. Hash routing needs no server-side
+// route configuration, so `simulacra serve` can hand out gui/dist as plain static files.
+// 根组件与 hash 路由：#/runs、#/runs/<id>、#/audits/<id> 对应三个页面；id 经 URL 解码，
+// 因为 runId 含冒号。hash 路由不需要服务端路由配置，`simulacra serve` 把 gui/dist 当普通静态文件
+// 发出即可。
+
 import { useEffect, useState } from "react";
 import { Audit } from "./pages/Audit";
 import { Run } from "./pages/Run";
@@ -9,6 +16,9 @@ type Route =
 	| { readonly page: "audit"; readonly id: string }
 	| { readonly page: "missing"; readonly hash: string };
 
+// Anything that does not match exactly falls to the missing page rather than the runs list, so
+// a typo in a link stays visible.
+// 不能精确匹配的一律落到 missing 页而不是运行列表，链接里的笔误才看得见。
 const parseRoute = (hash: string): Route => {
 	const parts = hash
 		.replace(/^#\/?/, "")
