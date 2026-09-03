@@ -1,3 +1,8 @@
+// Hono routes for audits: list, create, summary and report.html; creation parses the plan with
+// the same loaders as the CLI and starts it in the background through the run registry.
+// 审计相关的 Hono 路由：列表、创建、摘要与 report.html；创建时用与 CLI 相同的加载器解析计划，
+// 经运行注册表在后台启动。
+
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { Hono } from "hono";
@@ -23,6 +28,9 @@ import {
 	type ApiDeps,
 } from "./shared";
 
+// YAML text gets the example-directory lookup so a shipped audit.yaml resolves its base
+// scenario path; objects resolve against the server cwd.
+// YAML 文本走示例目录查找，随包的 audit.yaml 才能解析到其基础场景路径；对象按服务进程的 cwd 解析。
 const planOf = (raw: string | Record<string, unknown>): Result<AuditPlan, readonly ApiIssue[]> => {
 	const parsed =
 		typeof raw === "string"
@@ -77,6 +85,9 @@ export const auditRoutes = (deps: ApiDeps): Hono => {
 				: { replications: parsed.data.replications }),
 			...(parsed.data.provider === undefined ? {} : { provider: parsed.data.provider }),
 		});
+		// Only AuditExists is a 409; name and axis problems are 400 with the issue pointing at the
+		// body field, mirroring how zod failures are reported.
+		// 只有 AuditExists 是 409；名字与轴的问题是 400，issue 指向请求体字段，与 zod 失败的报法一致。
 		if (started.ok) return c.json({ auditId: started.value.auditId }, 201);
 		const issue = describeStartError(started.error);
 		return started.error.kind === "AuditExists"
