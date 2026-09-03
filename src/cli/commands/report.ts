@@ -1,3 +1,8 @@
+// `simulacra report`: re-renders report.html from the audit.json of an audit directory, so a
+// report can be regenerated after a renderer change without rerunning the audit.
+// `simulacra report`：从审计目录的 audit.json 重新渲染 report.html，
+// 渲染器变更后无需重跑审计即可再生成报告。
+
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { defineCommand } from "citty";

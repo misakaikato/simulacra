@@ -1,4 +1,10 @@
 #!/usr/bin/env bun
+// Entry point of the simulacra CLI: wires the citty sub-commands, answers --version and
+// --help, and turns any thrown error into exit code 1 plus one `error:` line (the stack is
+// printed only at debug or trace level). Like every tool it imports only src/index.
+// simulacra CLI 入口：装配 citty 子命令，应答 --version 与 --help，把任何抛出的错误变成
+// 退出码 1 加一行 `error:`（只在 debug 或 trace 级别打印栈）。与所有入口一样只导入 src/index。
+
 import { defineCommand, runCommand, runMain } from "citty";
 import { version } from "../index";
 import { auditCommand } from "./commands/audit";
@@ -39,6 +45,11 @@ const main = defineCommand({
 	subCommands,
 });
 
+// Version and help are answered before any command runs, so neither loads a scenario or a
+// plugin; -h is normalised to --help before citty renders the usage. pluginPathsOf runs
+// first so a malformed --plugin fails through the same error path as a command failure.
+// 版本与帮助在任何命令执行前应答，两者都不会加载场景或插件；-h 在 citty 渲染用法前统一成 --help。
+// pluginPathsOf 先跑一遍，写坏的 --plugin 走与命令失败相同的错误通路。
 const cli = async (rawArgs: readonly string[]): Promise<number> => {
 	if (rawArgs.includes("--version") || rawArgs[0] === "-v") {
 		console.log(version);
