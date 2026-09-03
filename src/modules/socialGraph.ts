@@ -1,3 +1,11 @@
+// Social graph module: owns the directed `edge` table (src/dst/kind), defines follow/unfollow,
+// observes each agent's out-neighbours and exposes GraphView to routers and transitions. Graph
+// generation (random or power-law configuration model), homophily rewiring and hub assignment
+// all happen once in initialize, before tick 0.
+// 社交图模块：拥有有向 `edge` 表（src/dst/kind），定义 follow/unfollow，观察每个 agent 的出邻居，
+// 并向路由器与转移函数提供 GraphView。图生成（随机或幂律配置模型）、同质性重连与 hub 分配
+// 都在 tick 0 之前的 initialize 里一次完成。
+
 import { z } from "zod";
 import { ActionRejected, defineAction } from "../core/actions";
 import { ZERO_EVENT_ID, newEntityId, toEntityId } from "../core/ids";
@@ -60,7 +68,11 @@ export type SocialGraphOptions = z.output<typeof SocialGraphOptionsSchema>;
 export type IndexEdge = readonly [number, number];
 
 // Generators over node indices 0..n-1
+// 生成器工作在节点下标 0..n-1 上
 
+// Directed edges drawn uniformly without self-loops or duplicates; the target count is
+// n * meanDegree capped at the complete digraph so the loop always terminates.
+// 均匀抽取有向边，不含自环与重边；目标边数为 n * meanDegree，上限为完全有向图，循环必然终止。
 export const randomEdges = (n: number, meanDegree: number, rng: Rng): readonly IndexEdge[] => {
 	if (n < 2 || meanDegree <= 0) return [];
 	const target = Math.min(Math.round(n * meanDegree), n * (n - 1));
@@ -81,6 +93,12 @@ export const randomEdges = (n: number, meanDegree: number, rng: Rng): readonly I
 const paretoDegree = (u: number, xmin: number, alpha: number, cap: number): number =>
 	Math.max(1, Math.min(cap, Math.round(xmin * (1 - u) ** (-1 / (alpha - 1)))));
 
+// Configuration model: out-degrees follow a discrete Pareto whose xmin is chosen so the mean
+// equals meanDegree when exponent > 2, in-degrees are the same multiset shuffled, and stubs are
+// paired by a shuffle. Self-loops and duplicates are dropped, so the realised mean degree sits
+// slightly below the target.
+// 配置模型：出度服从离散 Pareto，exponent > 2 时选 xmin 使均值等于 meanDegree，入度是同一
+// 多重集打乱后的结果，桩按洗牌配对。自环与重边被丢弃，实际平均度略低于目标值。
 export const powerlawEdges = (
 	n: number,
 	meanDegree: number,
@@ -119,6 +137,7 @@ export const powerlawEdges = (
 };
 
 // Homophily h = sum_ij A_ij (x_i - mean)(x_j - mean) / sum_ij A_ij (x_i - mean)^2
+// 同质性 h = sum_ij A_ij (x_i - mean)(x_j - mean) / sum_ij A_ij (x_i - mean)^2，mean 取人口均值
 
 const meanOf = (xs: readonly number[]): number =>
 	xs.length === 0 ? 0 : xs.reduce((a, b) => a + b, 0) / xs.length;
@@ -144,6 +163,14 @@ export interface RewireResult {
 	readonly iterations: number;
 }
 
+// Degree-preserving double-edge swaps: (a->b, c->d) becomes (a->d, c->b), which keeps every
+// node's in- and out-degree. Only swaps that move h toward the band are accepted. The
+// denominator depends on edge sources alone, which swaps never change, so only the numerator is
+// updated incrementally; an exhausted iteration budget returns reached=false for the caller to
+// log.
+// 保度的双边交换：(a->b, c->d) 变成 (a->d, c->b)，每个节点的入度与出度不变。只接受让 h 向
+// 区间靠近的交换。分母只依赖边的源端，交换不会改变它，因此只增量更新分子；
+// 迭代预算耗尽时返回 reached=false，由调用方记录警告。
 export const rewireToBand = (
 	edges: readonly IndexEdge[],
 	x: readonly number[],
@@ -199,6 +226,10 @@ export interface HubStance {
 	readonly value: number;
 }
 
+// Hubs are the highest in-degree nodes (appendix C); anti/pro pin them to the population's
+// min/max stance, mixed alternates the two, random samples an existing stance.
+// hub 取入度最高的节点（附录 C）；anti/pro 把它们钉到人口立场的 min/max，mixed 交替两者，
+// random 从现有立场中抽样。
 export const assignHubs = (
 	edges: readonly IndexEdge[],
 	x: readonly number[],
@@ -234,6 +265,7 @@ export const assignHubs = (
 };
 
 // Adjacency derived from the edge table
+// 由 edge 表派生的邻接结构
 
 export interface Adjacency {
 	readonly out: ReadonlyMap<EntityId, ReadonlyMap<EntityId, EntityId>>;
@@ -246,6 +278,10 @@ const hasEdgeTable = (view: WorldView): boolean =>
 	view.entities.includes(EDGE_ENTITY) &&
 	view.columns(EDGE_ENTITY).some((c) => c.name === EDGE_COLUMNS.src);
 
+// The inner map's value is the edge id so unfollow can delete the exact row; a world without
+// the edge table (e.g. a scenario that never declared this module) yields an empty adjacency.
+// 内层 map 的值是边 id，unfollow 能精确删除那一行；没有 edge 表的世界
+// （如从未声明本模块的场景）给出空邻接。
 export const adjacencyOf = (view: WorldView): Adjacency => {
 	if (!hasEdgeTable(view)) return EMPTY_ADJACENCY;
 	const ids = view.ids(EDGE_ENTITY);
@@ -305,6 +341,11 @@ const UnfollowParams = z.object({
 	target: z.string().min(1).describe("id of the agent to unfollow"),
 });
 
+// The adjacency is a cache over the edge table: rebuilt in step once the tick's effects have
+// landed, dropped on initialize and setState. Action resolution only reads it, which is what
+// makes concurrencySafe true.
+// 邻接结构是 edge 表上的缓存：本 tick 效果落地后在 step 里重建，initialize 与 setState 时丢弃。
+// 动作解析只读它，这正是 concurrencySafe 为 true 的依据。
 class SocialGraphModule implements Module {
 	readonly name: string;
 	readonly concurrencySafe = true;
@@ -335,6 +376,10 @@ class SocialGraphModule implements Module {
 		return ok(undefined);
 	}
 
+	// Order matters: hubs overwrite stances before rewiring so the band is reached on the final
+	// stances; edge ids come from their own rng fork so they do not shift when rewiring is toggled.
+	// 顺序有讲究：hub 先改写立场再重连，区间是在最终立场上达成的；
+	// 边 id 用独立的 rng 分支，开关重连不会让边 id 漂移。
 	async initialize(world: WorldView, rng: Rng): Promise<readonly Effect[]> {
 		const { entity, stanceColumn } = this.options;
 		const ids = world.ids(entity);
