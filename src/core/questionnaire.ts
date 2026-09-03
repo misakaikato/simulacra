@@ -1,3 +1,9 @@
+// Questionnaire plumbing shared by the kernel and executors: the answer action and its JSON
+// schema, the instruction text, answer parsing with per-question issues, and bare interview
+// requests for executors that render nothing themselves.
+// 内核与执行体共用的问卷管线：answer 动作及其 JSON schema、指令文本、带逐题问题的答案解析，
+// 以及给不自行渲染的执行体使用的裸访谈请求。
+
 import { z } from "zod";
 import { makeEvent } from "./events";
 import { newEventId } from "./ids";
@@ -41,6 +47,7 @@ export const toQuestion = (q: z.output<typeof QuestionSchema>): Question => ({
 });
 
 // Reads the questions back out of a request observation, for providers that answer by rule.
+// 从请求的 observation 里读回问题列表，供按规则作答的提供者使用。
 export const questionsOf = (observation: JsonObject): readonly Question[] | undefined => {
 	const parsed = QuestionsInObservation.safeParse(observation[QUESTIONNAIRE_KEY]);
 	return parsed.success ? parsed.data.questions.map(toQuestion) : undefined;
@@ -63,6 +70,9 @@ const answerSchemaOf = (question: Question): JsonObject => {
 	}
 };
 
+// One required property per question, so a structured-output endpoint refuses partial
+// answers; prompt mode relies on the instruction text and parseAnswers instead.
+// 每题一个必填属性，结构化输出端点会拒绝不完整的答案；prompt 模式则依靠指令文本与 parseAnswers。
 export const answersSchema = (q: Questionnaire): JsonObject => {
 	const properties: Record<string, JsonValue> = {};
 	for (const question of q.questions) properties[question.id] = answerSchemaOf(question);
@@ -127,6 +137,9 @@ type ParsedAnswer =
 	| { readonly ok: true; readonly value: JsonValue }
 	| { readonly ok: false; readonly issue: AnswerIssue };
 
+// Numeric strings are accepted because prompt-mode models often quote numbers; choices must
+// match exactly so a paraphrased option counts as an invalid answer.
+// 接受数字字符串，因为 prompt 模式的模型常把数字加引号；选项必须精确匹配，改写过的选项算无效答案。
 const parseAnswer = (question: Question, raw: JsonValue | undefined): ParsedAnswer => {
 	const issue = (reason: string): ParsedAnswer => ({
 		ok: false,
@@ -182,6 +195,8 @@ const scalarJson = (v: Scalar): JsonValue => (Array.isArray(v) ? [...v] : v);
 
 // Bare interview requests for executors without their own interview hook: the row is the
 // state, the questions are the observation, and there is no rendered prompt.
+// 给没有 interview 钩子的执行体用的裸访谈请求：行数据即 state，问题即 observation，没有渲染的 prompt。
+// entersMemory 为 false 时 observation 事件不带 agentId，记忆组件因此看不到访谈，与内核写决策事件的方式一致。
 export const bareInterviewRequests = (
 	world: WorldView,
 	entity: string,

@@ -1,3 +1,9 @@
+// Endpoint probe behind `simulacra doctor --llm`: one structured call, one parallel batch and a
+// cached-token check through the real gateway, capped at PROBE_MAX_CALLS so a probe never
+// spends more than six requests.
+// `simulacra doctor --llm` 背后的端点探测：经真实网关发一次结构化调用、一批并行请求并检查缓存 token，
+// 以 PROBE_MAX_CALLS 封顶，一次探测最多花费六个请求。
+
 import type { LLMRequest } from "../core/protocols";
 import { LLMSpecSchema } from "../core/schema";
 import { silentLogger } from "../logging/logger";
@@ -5,6 +11,10 @@ import { createGateway, type FetchLike } from "./gateway";
 
 export const PROBE_MAX_CALLS = 6;
 const PARALLEL = 4;
+// A long shared system prefix gives prefix caching something to hit; cached_tokens reported
+// on the parallel batch is the evidence that the endpoint exposes it.
+// 较长的共享 system 前缀给前缀缓存提供命中机会；并行批次报告的 cached_tokens 就是端点暴露
+// 该能力的证据。
 const SHARED_PREFIX = Array.from(
 	{ length: 40 },
 	(_, i) => `Fact ${i + 1}: the simulation kernel records every decision as an event.`,
@@ -32,6 +42,9 @@ export interface ProbeResult {
 	readonly calls: number;
 }
 
+// The key is injected through a fetch wrapper rather than the environment so the probe can
+// test a key the shell does not export.
+// 密钥经 fetch 包装注入而不是走环境变量，探测可以测试 shell 未导出的密钥。
 const authorized =
 	(apiKey: string): FetchLike =>
 	(url, init) => {
