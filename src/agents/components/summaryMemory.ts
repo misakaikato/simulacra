@@ -1,3 +1,9 @@
+// Summary-memory component: reads the memory list an earlier component produced, replaces entries
+// covered by an LLM-written summary and asks the gateway for a new summary once the uncovered
+// tail exceeds the threshold. Every call is an llm_call event; a missing gateway is a failure.
+// 摘要记忆组件：读取前面组件产出的记忆列表，用 LLM 写的摘要替换已覆盖的条目，
+// 未覆盖的尾部超过阈值时向网关请求新摘要。每次调用都是 llm_call 事件；没有网关记为失败。
+
 import { z } from "zod";
 import { makeEvent } from "../../core/events";
 import { FAILURE_TYPES } from "../../core/failures";
@@ -17,6 +23,10 @@ import { CONTEXT_KEYS, memoryEntriesOf, type MemoryEntrySchema } from "./shared"
 
 type Entry = z.output<typeof MemoryEntrySchema>;
 
+// `upTo` is the logical time of the last entry folded into the summary; entries newer than it
+// are still shown verbatim. `covered` counts how many entries the summary chain has absorbed.
+// `upTo` 是摘要吸收的最后一条记忆的逻辑时间，比它新的条目仍原样展示；
+// `covered` 累计摘要链吸收过的条目数。
 const SummarySchema = z.object({
 	text: z.string(),
 	eventId: z.string().min(1),
@@ -77,6 +87,10 @@ class SummaryMemory implements Component {
 		this.logger = deps.logger.child({ component: "summaryMemory" });
 	}
 
+	// The uncovered tail is stashed per agent here and consumed in consolidate, so the decision
+	// about whether to summarise is based on exactly what the prompt showed this tick.
+	// 未覆盖的尾部按 agent 暂存于此、在 consolidate 中消费，是否摘要的判断因此严格基于本 tick
+	// prompt 实际展示的内容。
 	preAct(
 		agentId: EntityId,
 		_view: WorldView,
@@ -93,6 +107,10 @@ class SummaryMemory implements Component {
 
 	postAct(): void {}
 
+	// The summary's event id is drawn from the consolidate rng before the gateway call and reused
+	// as the llm_call event id and the nonce tag, so replays reproduce the same ids and records.
+	// 摘要的事件 id 在调网关之前就从 consolidate 的 rng 派生，同时用作 llm_call 事件 id 与
+	// nonce 标签，回放因此得到相同的 id 与录制记录。
 	async consolidate(agentId: EntityId, log: EventLog, ctx: ConsolidateContext): Promise<void> {
 		const recent = this.pending.get(agentId) ?? [];
 		this.pending.delete(agentId);

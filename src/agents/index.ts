@@ -1,3 +1,8 @@
+// Registration entry for the built-in executors: `focal` assembles its component list here so
+// component construction errors surface at plugin creation, `cohort` delegates to its factory.
+// 内置执行体的注册入口：`focal` 在此组装组件列表，组件构造错误在插件创建时就暴露；
+// `cohort` 直接交给自己的工厂。
+
 import { z } from "zod";
 import type { Component, DuplicatePlugin, Registry } from "../core/protocols";
 import { parseOptions } from "../core/registry";

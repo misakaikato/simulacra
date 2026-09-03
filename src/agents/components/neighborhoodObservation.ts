@@ -1,3 +1,7 @@
+// Neighbourhood observation component: passes the social graph module's neighbour list through
+// and records the configured radius so the prompt states how far the view reaches.
+// 邻域观察组件：透传社交图模块给出的邻居列表，并记下配置的半径，让 prompt 说明视野范围。
+
 import type { Component } from "../../core/protocols";
 import type { JsonValue } from "../../core/types";
 import { CONTEXT_KEYS } from "./shared";
