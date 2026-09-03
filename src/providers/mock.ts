@@ -1,3 +1,9 @@
+// Deterministic mock provider: picks an action by hashing the prompt hash (or the canonical
+// observation) with the round's seed path, then builds schema-valid args, filling id-typed
+// fields from candidate lists in the observation. No LLM, zero cost, fully reproducible.
+// 确定性 mock 提供者：用 prompt 哈希（或规范化观察）与本轮种子路径的哈希选动作，再按 schema
+// 生成合法参数，id 类字段从观察里的候选列表中选取。不调 LLM、零成本、完全可复现。
+
 import { zodToJsonSchema } from "../core/actions";
 import { FAILURE_TYPES } from "../core/failures";
 import { canonicalJson, hashOf } from "../core/hash";
@@ -32,6 +38,9 @@ const TWO_POW_32 = 4294967296;
 const isObject = (v: JsonValue | undefined): v is JsonObject =>
 	typeof v === "object" && v !== null && !Array.isArray(v);
 
+// Only required properties are filled, so the example is the smallest object the schema
+// accepts; strings get the placeholder that withCandidateIds later recognises.
+// 只填必填属性，示例即 schema 接受的最小对象；字符串填占位符，供 withCandidateIds 之后识别。
 export const exampleFromJsonSchema = (schema: JsonValue): JsonValue => {
 	if (!isObject(schema)) return null;
 	if ("const" in schema) return schema.const ?? null;
@@ -66,6 +75,7 @@ export const exampleFromJsonSchema = (schema: JsonValue): JsonValue => {
 };
 
 // Id-typed parameters are filled from the lists the agent can see in its observation
+// id 类参数从 agent 观察里能看到的列表中选取
 
 export interface CandidateGroup {
 	readonly key: string;
@@ -91,6 +101,10 @@ export const candidateGroupsOf = (observation: JsonObject): readonly CandidateGr
 export const isIdField = (name: string): boolean =>
 	name === TARGET_FIELD || (name.length > ID_SUFFIX.length && name.endsWith(ID_SUFFIX));
 
+// Resolution order from appendix E: `<stem>Id` prefers a group whose key contains the stem,
+// then any object list carrying ids; `target` takes a plain string list (e.g. neighbours).
+// 附录 E 的解析顺序：`<词干>Id` 优先取键名含该词干的组，其次任何带 id 的对象列表；
+// `target` 取纯字符串列表（如邻居）。
 export const candidatesForField = (
 	field: string,
 	groups: readonly CandidateGroup[],
@@ -108,6 +122,8 @@ export const candidatesForField = (
 const indexFromHash = (hash: string, n: number): number =>
 	Number.parseInt(hash.slice(0, 8), 16) % n;
 
+// The field name enters the hash, so two id fields in one call need not pick the same candidate.
+// 字段名参与哈希，同一次调用里的两个 id 字段不必选中同一个候选。
 export const withCandidateIds = (
 	args: JsonObject,
 	observation: JsonObject,
@@ -175,6 +191,7 @@ class MockProvider implements DecisionProvider {
 		const def = this.actions.get(action);
 		if (action === ANSWER_ACTION && def === undefined) return this.answer(req, key, ctx);
 		// Actions outside the registry are virtual (batch executors resolve them): no args to build.
+		// 注册表之外的动作是虚拟动作（由批量执行体解析）：无需构造参数。
 		if (def === undefined) {
 			this.decided += 1;
 			return ok({
@@ -217,6 +234,7 @@ class MockProvider implements DecisionProvider {
 	}
 
 	// Questionnaire answers: a valid value per question, drawn deterministically from the key.
+	// 问卷回答：每题一个合法值，由键确定性地导出。
 	private answer(
 		req: DecisionRequest,
 		key: string,

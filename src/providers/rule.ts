@@ -1,3 +1,9 @@
+// Rule provider: a user-supplied `(request, rng) => Decision` function with a per-agent rng
+// derived from the scenario seed, the round's seed path and a hash of the agent id, so an agent's
+// stream does not depend on batch order. A throwing rule is a per-agent failure, not a crash.
+// 规则提供者：用户给的 `(request, rng) => Decision` 函数，rng 由场景种子、本轮种子路径与
+// agent id 的哈希派生，agent 的随机流与批次顺序无关。规则抛异常记为该 agent 的失败而非崩溃。
+
 import { FAILURE_TYPES } from "../core/failures";
 import { sha256Hex } from "../core/hash";
 import type { DecisionProvider, Rng } from "../core/protocols";
@@ -82,6 +88,7 @@ export const createRuleProvider = (options: RuleProviderOptions): DecisionProvid
 	new RuleProvider(options);
 
 // Built-in rule over the feature vector: one action when a feature exceeds a threshold, another otherwise.
+// 内置的特征向量规则：某个特征超过阈值选一个动作，否则选另一个。
 
 export interface ThresholdRuleOptions {
 	readonly feature: number;
