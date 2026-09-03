@@ -1,3 +1,9 @@
+// Built-in activation policies: each tick they decide which agents act and in which mode
+// (llm/rule/manual/interview) from the world and the tick rng alone, so activation is
+// reproducible and the kernel can override it per step without touching the policy.
+// 内置激活策略：每 tick 只凭世界状态与本 tick 的 rng 决定哪些 agent 行动、以何种模式
+// （llm/rule/manual/interview），激活因此可复现，内核也能按步覆盖而不必改策略。
+
 import { z } from "zod";
 import type {
 	ActivationPolicy,
@@ -47,6 +53,10 @@ export const bernoulli = (p: number, opts: PolicyOptions = {}): ActivationPolicy
 		),
 });
 
+// A profile cell is either one probability for every hour or a list indexed by the hour of
+// the logical day (modulo its length); anything else activates nobody rather than everybody.
+// 人口列的一个单元要么是所有小时共用的概率，要么是按逻辑日小时（对长度取模）索引的列表；
+// 其它形态一律不激活任何人，而不是激活所有人。
 const hourlyProbability = (profile: Scalar, hour: number): number => {
 	if (typeof profile === "number") return profile;
 	if (Array.isArray(profile)) {
@@ -72,6 +82,9 @@ export const profileHourly = (
 	},
 });
 
+// maskTimer activates rows whose mask is set and whose timer has come due, letting a module or
+// intervention schedule agents by writing two columns instead of a policy.
+// maskTimer 激活掩码为真且计时器到期的行，模块或干预只需写两列就能调度 agent，无需自定义策略。
 export const maskTimer = (
 	maskColumn: string,
 	timerColumn: string,
@@ -110,6 +123,10 @@ const stripUndefined = (o: {
 	...(o.mode === undefined ? {} : { mode: o.mode }),
 });
 
+// Factories strip undefined option keys so the policies' `opts` objects satisfy
+// exactOptionalPropertyTypes and default resolution stays in one place (`?? "agent"`, `?? "llm"`).
+// 工厂剔除值为 undefined 的选项键，策略的 `opts` 满足 exactOptionalPropertyTypes，
+// 默认值解析只留在一处（`?? "agent"`、`?? "llm"`）。
 export const registerBuiltinPolicies = (registry: Registry): Result<void, DuplicatePlugin> => {
 	const { policies } = registry;
 	const factories: readonly (readonly [string, PluginFactory<ActivationPolicy>])[] = [
