@@ -1,3 +1,10 @@
+// Catalogue of perturbation-axis templates following the TRAILS taxonomy: design dimensions
+// (what the simulation is made of) and representation categories (how the same design is
+// written down for the model). A template fixes level, kind, dimension and a default target;
+// a plan supplies the levels and may override the target.
+// 扰动轴模板目录，沿用 TRAILS 分类：设计维度（模拟由什么构成）与表示类别
+// （同一设计如何写给模型）。模板固定层级、种类、维度与默认 target；计划提供取值并可覆盖 target。
+
 import type { JsonValue, PerturbationAxis } from "../core/types";
 
 export type AxisLevel = PerturbationAxis["level"];
@@ -14,6 +21,7 @@ export interface AxisTemplate {
 }
 
 // TRAILS design dimensions D1 to D8: what the simulation is made of
+// TRAILS 设计维度 D1 到 D8：模拟由什么构成
 
 export const DESIGN_AXES: readonly AxisTemplate[] = [
 	{
@@ -91,6 +99,7 @@ export const DESIGN_AXES: readonly AxisTemplate[] = [
 ];
 
 // TRAILS representation categories R1 to R5: how the same design is written down for the model
+// TRAILS 表示类别 R1 到 R5：同一设计如何写给模型
 
 export const REPRESENTATION_AXES: readonly AxisTemplate[] = [
 	{
@@ -145,6 +154,10 @@ export const AXIS_CATALOG: readonly AxisTemplate[] = [...DESIGN_AXES, ...REPRESE
 export const axisTemplate = (id: string): AxisTemplate | undefined =>
 	AXIS_CATALOG.find((axis) => axis.id === id);
 
+// Default targets name the example scenarios' parameters (params.homophily, policy.options.p);
+// a plan overrides `target` with whatever path its own scenario exposes.
+// 默认 target 指向示例场景的参数（params.homophily、policy.options.p）；
+// 计划可用自己场景暴露的任意路径覆盖 `target`。
 export const axisFromTemplate = (
 	id: string,
 	levels: readonly JsonValue[],

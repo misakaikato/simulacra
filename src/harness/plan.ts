@@ -1,3 +1,9 @@
+// Audit plan loading: a plan document names its base scenario inline or by path (exactly one),
+// paths resolve relative to the plan file, and planHash excludes `concurrency` so the same
+// experiment hashes identically on any machine (appendix E).
+// 审计计划加载：计划文档内联或按路径给出基线场景（二选一），路径相对计划文件解析，
+// planHash 排除 `concurrency`，同一实验在任何机器上哈希相同（附录 E）。
+
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 import { parse as parseYaml } from "yaml";
@@ -34,6 +40,10 @@ const issue = (path: readonly PropertyKey[], message: string, input: unknown): S
 	input,
 });
 
+// Issues from a base scenario loaded by path are re-rooted under `baseScenario` so the user
+// sees where in the plan the failure originates.
+// 按路径加载的基线场景若有问题，其 issue 路径会挂到 `baseScenario` 之下，
+// 用户能看出失败源自计划的哪一处。
 const resolveBase = (
 	doc: AuditPlanDocument,
 	opts: ParsePlanOptions,
