@@ -1,3 +1,9 @@
+// Writes bench tables into bench/RESULTS.md by section: upsertSection replaces the
+// "## <heading>" block in place (or appends it), so the kernel and LLM benches update
+// independently, and metaLines stamps date, versions and machine on every table.
+// 按节把基准表格写进 bench/RESULTS.md：upsertSection 原地替换（或追加）"## <heading>" 块，
+// 内核与 LLM 基准可以各自独立更新；metaLines 为每张表盖上日期、版本与机器。
+
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { version } from "../src/index";
@@ -27,6 +33,9 @@ export const writeSection = (file: string, heading: string, body: string): void 
 	writeFileSync(file, upsertSection(existing, heading, body));
 };
 
+// The CPU brand string on macOS, arch and platform elsewhere: enough to tell two machines apart
+// when comparing rows.
+// macOS 上取 CPU 品牌字符串，其它平台取架构与平台名：对比行时足以区分两台机器。
 export const machineModel = (): string => {
 	if (process.platform === "darwin") {
 		const proc = Bun.spawnSync(["sysctl", "-n", "machdep.cpu.brand_string"]);

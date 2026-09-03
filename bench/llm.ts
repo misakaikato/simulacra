@@ -1,3 +1,11 @@
+// Real-endpoint LLM bench: runs the prisoner's dilemma and a small echo chamber against the
+// configured endpoint in record mode, refreshing the shipped recordings, and upserts cost,
+// failure and truncation counts into bench/RESULTS.md. MAX_TOTAL_CALLS bounds the spend; the
+// replay tests rebuild the same scenarios through benchScenario.
+// 真实端点的 LLM 基准：以 record 模式对配置的端点跑囚徒困境与一个小回声室，刷新随包发布的录制，
+// 并把成本、失败与截断计数 upsert 进 bench/RESULTS.md。MAX_TOTAL_CALLS 限制花费；
+// 回放测试通过 benchScenario 重建同样的场景。
+
 import { existsSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -91,6 +99,7 @@ export interface LlmBenchReport {
 }
 
 // The scenario exactly as the bench runs it; replay tests must build theirs through the same function
+// 与基准实际运行的场景完全一致；回放测试必须经同一函数构造自己的场景
 export const benchScenario = (root: string, c: LlmBenchCase): Result<Scenario, string> => {
 	const path = join(root, "examples", c.example, "scenario.yaml");
 	if (!existsSync(path)) return err(`${path}: file not found`);
@@ -110,6 +119,7 @@ export const benchScenario = (root: string, c: LlmBenchCase): Result<Scenario, s
 };
 
 // Everything that enters the recording key besides the prompt: budget, model and mode
+// 除提示词外进入录制键的一切：预算、模型与模式
 export const benchLlmOverride = (
 	c: LlmBenchCase,
 	base: LLMSpec,
@@ -127,6 +137,9 @@ export const benchLlmOverride = (
 	...(endpoint.extra === undefined ? {} : { extra: endpoint.extra }),
 });
 
+// Old recordings are deleted before recording so the shipped set is exactly what this bench
+// produced, with no stale keys left over from earlier prompts.
+// 录制前先删旧录制，随包发布的集合正好是本次基准产出的，不残留早先提示词的过期键。
 const clearRecordings = (dir: string | undefined): void => {
 	if (dir === undefined || !existsSync(dir)) return;
 	for (const file of readdirSync(dir)) if (file.endsWith(".json")) rmSync(join(dir, file));
@@ -194,6 +207,9 @@ export const runBench = async (opts: LlmBenchOptions): Promise<Result<LlmBenchRe
 	const baseUrl = opts.baseUrl ?? DEFAULT_BASE_URL;
 	const model = opts.model ?? DEFAULT_MODEL;
 	const preset = deepseek();
+	// The DeepSeek preset's extra parameters apply only when the base URL is DeepSeek's; they
+	// enter the recording key, so a replay must send the same ones.
+	// DeepSeek 预设的 extra 参数只在 base URL 是 DeepSeek 时套用；它们进入录制键，回放必须发同样的参数。
 	const endpoint: BenchEndpoint = {
 		mode: "record",
 		apiKeyEnv: opts.apiKeyEnv,
@@ -258,6 +274,8 @@ const main = async (): Promise<number> => {
 	console.log(report.value.markdown);
 	console.log(``);
 	console.log(`results: ${report.value.out}`);
+	// Exit non-zero when a run failed or the budget was exceeded, so either regression fails CI.
+	// 有运行失败或超出预算时非零退出，两种回退都会让 CI 变红。
 	const succeeded = report.value.rows.every((r) => r.status === "succeeded");
 	const withinBudget = report.value.totalCalls <= MAX_TOTAL_CALLS;
 	if (!succeeded) console.error(`error: a bench run failed`);
