@@ -1,3 +1,8 @@
+// Pairwise test table of the audit page: filter by metric, rows sorted by |Cohen d| descending,
+// Holm-corrected p below 0.05 highlighted and direction flips flagged.
+// 审计页的成对检验表：按指标过滤，行按 |Cohen d| 降序，Holm 校正 p 低于 0.05 高亮，
+// 并标出方向翻转。
+
 import { useMemo, useState } from "react";
 import type { PairwiseTest } from "../../../src/core/types";
 import { num, pval } from "../format";

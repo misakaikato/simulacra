@@ -1,3 +1,9 @@
+// Left pane of the run page: one row per tick with the number of activated agents as a bar
+// plus measurement and failure counts; clicking a row selects that tick for the graph, chart
+// and inspector, clicking it again clears the selection.
+// 运行页左栏：每个 tick 一行，激活的 agent 数画成条，另列测量与失败计数；点击某行把该 tick
+// 选给图、折线与检视器，再点一次取消选择。
+
 import { useMemo } from "react";
 import type { Event as SimEvent } from "../../../src/core/types";
 import { Empty } from "./Primitives";
@@ -15,6 +21,10 @@ interface Props {
 	readonly onSelect: (tick: number | undefined) => void;
 }
 
+// Only activation, measurement and failure events reach the timeline, so counting stays cheap
+// even for long runs; the activation bar is scaled to the busiest tick.
+// 只有 activation、measurement 与 failure 事件进入时间轴，长运行的计数也很便宜；
+// 激活条按最忙的 tick 归一。
 const aggregate = (events: readonly SimEvent[]): readonly TickRow[] => {
 	const rows = new Map<number, { activated: number; measurements: number; failures: number }>();
 	for (const e of events) {

@@ -1,3 +1,9 @@
+// The GUI's only data path: typed fetch wrappers over the HTTP API of src/api, the paged fetch
+// of every event of some kinds, and the SSE subscription. Contract types are imported from
+// src/api/contract, never redefined here.
+// GUI 唯一的数据通路：对 src/api HTTP 接口的类型化 fetch 封装、按种类分页拉取全部事件，
+// 以及 SSE 订阅。契约类型从 src/api/contract 导入，此处绝不重复定义。
+
 import type {
 	AgentRow,
 	AuditSummary,
@@ -66,6 +72,9 @@ const issueText = (issue: unknown): string => {
 	return path === "" ? message : `${path}: ${message}`;
 };
 
+// Error bodies come in two shapes, {error} and {issues[]}; both flatten to one message so every
+// component can hand it to an ErrorBar.
+// 错误体有 {error} 与 {issues[]} 两种形状；都压成一条信息，任何组件都能直接交给 ErrorBar。
 const messageOf = async (res: Response): Promise<string> => {
 	const text = await res.text();
 	const body = parseJson(text);
@@ -127,6 +136,9 @@ export const api = {
 	reportUrl: (id: string): string => `/api/audits/${encode(id)}/report.html`,
 };
 
+// Pages of PAGE_SIZE up to MAX_PAGES (10 000 events); beyond that the result is truncated
+// rather than blocking the page on an enormous run.
+// 按 PAGE_SIZE 分页，最多 MAX_PAGES 页（一万个事件）；超出则截断，不让巨大的运行卡住页面。
 export const allEvents = async (id: string, q: EventQuery): Promise<readonly SimEvent[]> => {
 	const out: SimEvent[] = [];
 	for (let page = 0; page < MAX_PAGES; page++) {
@@ -143,6 +155,10 @@ export interface StreamHandlers {
 	readonly onError: (message: string) => void;
 }
 
+// `done` closes the source before the handler runs so EventSource does not reconnect; onerror
+// reports only when the browser gave up (CLOSED), transient reconnects stay silent.
+// `done` 先关闭 source 再调处理器，EventSource 不会重连；onerror 只在浏览器放弃（CLOSED）时报告，
+// 临时重连保持静默。
 export const streamRun = (id: string, handlers: StreamHandlers): (() => void) => {
 	const source = new EventSource(`${runPath(id)}/stream`);
 	source.addEventListener("event", (message) => {

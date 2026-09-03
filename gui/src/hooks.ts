@@ -1,3 +1,9 @@
+// Hooks shared by the pages: useLoad (a promise as {data, error, loading, reload} with
+// stale-result protection), useInterval for polling and useDarkTheme following
+// prefers-color-scheme.
+// 页面共用的 hook：useLoad（把 promise 变成 {data, error, loading, reload}，带过期结果保护）、
+// 轮询用的 useInterval，以及跟随 prefers-color-scheme 的 useDarkTheme。
+
 import { useCallback, useEffect, useRef, useState } from "react";
 import { errorMessage } from "./format";
 
@@ -14,6 +20,9 @@ interface LoadState<T> {
 	readonly loading: boolean;
 }
 
+// `live` stops a slow earlier request from overwriting a newer one; on reload and on error the
+// previous data stays, so a polling page never flashes empty.
+// `live` 防止较慢的旧请求覆盖新请求；重载与出错时保留先前的数据，轮询页面不会闪成空白。
 export const useLoad = <T>(load: () => Promise<T>, deps: readonly unknown[]): Loadable<T> => {
 	const [state, setState] = useState<LoadState<T>>({
 		data: undefined,
@@ -40,6 +49,8 @@ export const useLoad = <T>(load: () => Promise<T>, deps: readonly unknown[]): Lo
 	return { ...state, reload };
 };
 
+// ms === null disables the timer; the callback ref keeps one interval alive across renders.
+// ms === null 关闭定时器；回调 ref 让同一个 interval 跨渲染存活。
 export const useInterval = (fn: () => void, ms: number | null): void => {
 	const ref = useRef(fn);
 	useEffect(() => {

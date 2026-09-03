@@ -1,3 +1,8 @@
+// Pure formatting helpers for ids, numbers, p-values, durations, scalars and logical time, plus
+// the ApiError-aware error message every ErrorBar shows.
+// 纯格式化辅助：id、数字、p 值、时长、标量与逻辑时间，以及每个 ErrorBar 展示的、
+// 能识别 ApiError 的错误信息。
+
 import type { LogicalTime, Scalar } from "../../src/core/types";
 import { ApiError } from "./api";
 

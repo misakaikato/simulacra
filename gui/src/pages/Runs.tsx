@@ -1,9 +1,18 @@
+// Runs page: tables of runs and audits read from the API (polled every 3 s while any is
+// running) and the new-run form, which posts YAML from a built-in example or the textarea and
+// navigates to the run's hash route.
+// Runs 页：从 API 读取的运行与审计表（有任一在运行时每 3 秒轮询）与新建运行表单，
+// 表单把内置示例或文本框里的 YAML POST 出去并跳转到该运行的 hash 路由。
+
 import { useCallback, useState, type FormEvent } from "react";
 import { api, type AuditSummary, type ProviderChoice, type RunSummary } from "../api";
 import { Empty, ErrorBar, Loading, StatusBadge } from "../components/Primitives";
 import { errorMessage } from "../format";
 import { useInterval, useLoad, type Loadable } from "../hooks";
 
+// Ids are encoded once here and decoded once by the router, so a runId with a colon
+// round-trips through the hash.
+// id 在这里编码一次、由路由解码一次，含冒号的 runId 能在 hash 里往返。
 export const runHash = (id: string): string => `#/runs/${encodeURIComponent(id)}`;
 export const auditHash = (id: string): string => `#/audits/${encodeURIComponent(id)}`;
 
@@ -120,12 +129,18 @@ const NewRunForm = ({ onCreated }: { readonly onCreated: (runId: string) => void
 	const [submitting, setSubmitting] = useState(false);
 	const [error, setError] = useState<string | undefined>(undefined);
 
+	// Picking an example copies its YAML into the textarea for editing; unedited text is matched
+	// back to the example directory by the server so relative paths resolve.
+	// 选中示例把它的 YAML 复制进文本框以便编辑；未改动的文本由服务器匹配回示例目录，相对路径才能解析。
 	const pickExample = (name: string): void => {
 		setExample(name);
 		const found = examples.data?.find((e) => e.name === name);
 		if (found !== undefined) setYaml(found.yaml);
 	};
 
+	// Client-side checks mirror NewRunSchema so common mistakes get an immediate message; the
+	// server stays the authority and its issues are shown verbatim.
+	// 客户端检查复刻 NewRunSchema，常见错误立即提示；服务器仍是权威，它返回的 issues 原样展示。
 	const submit = async (e: FormEvent): Promise<void> => {
 		e.preventDefault();
 		const seedValue = Number(seed);

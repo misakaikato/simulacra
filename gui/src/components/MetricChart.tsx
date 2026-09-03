@@ -1,3 +1,9 @@
+// Line chart of the measurement series on a canvas: nice-step axes, one colour per series from
+// the CSS palette, a dashed marker at the selected tick and a hover readout that snaps to the
+// nearest measured tick. Redraws on data, theme and container size changes.
+// canvas 上的测量序列折线图：取整刻度坐标轴、每条序列取 CSS 调色板一色、所选 tick 的虚线标记，
+// 以及吸附到最近测量 tick 的悬停读数。数据、主题或容器尺寸变化时重绘。
+
 import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent } from "react";
 import type { MetricSeries } from "../api";
 import { cssVar, sizeCanvas, useResize } from "../canvas";
@@ -16,6 +22,8 @@ interface Props {
 
 const paletteVar = (i: number): string => PALETTE[i % PALETTE.length] ?? "--accent";
 
+// 1-2-5 step selection so grid labels are round numbers at any range.
+// 1-2-5 步长选择，任何量程下网格标签都是整数。
 const niceStep = (range: number, target: number): number => {
 	if (range <= 0) return 1;
 	const raw = range / target;
@@ -68,6 +76,9 @@ export const MetricChart = ({ series, marker }: Props) => {
 				minY = Math.min(minY, p.value);
 				maxY = Math.max(maxY, p.value);
 			}
+		// A flat series is padded by one unit on each side so it draws as a visible line, not on
+		// the border.
+		// 平直的序列上下各留一个单位，画成看得见的线而不是压在边框上。
 		if (minY === maxY) {
 			minY -= 1;
 			maxY += 1;
@@ -122,6 +133,8 @@ export const MetricChart = ({ series, marker }: Props) => {
 				else ctx.lineTo(sx(p.tick), sy(p.value));
 			});
 			ctx.stroke();
+			// Dots mark individual measurements only while sparse; dense series stay a line.
+			// 稀疏时用圆点标出每个测量；稠密的序列只画线。
 			if (points.length < 60)
 				for (const p of points) {
 					ctx.beginPath();
@@ -138,6 +151,9 @@ export const MetricChart = ({ series, marker }: Props) => {
 			ctx.stroke();
 			ctx.setLineDash([]);
 		}
+		// The readout lists the value of every visible series at the hovered tick; the box flips to
+		// the left of the cursor near the right edge so it never leaves the canvas.
+		// 读数列出悬停 tick 上每条可见序列的值；靠近右边缘时框翻到光标左侧，绝不跑出画布。
 		if (hover !== undefined) {
 			const x = sx(hover);
 			ctx.strokeStyle = muted;
@@ -167,11 +183,16 @@ export const MetricChart = ({ series, marker }: Props) => {
 		}
 	}, [series, names, visible, ticks, marker, hover]);
 
+	// `dark` is a dependency so a theme switch re-reads the CSS variables.
+	// `dark` 列入依赖，切换主题会重新读取 CSS 变量。
 	useEffect(() => {
 		draw();
 	}, [draw, dark]);
 	useResize(containerRef, draw);
 
+	// The pointer x is mapped back to tick space and snapped to the nearest tick that has a point,
+	// so the readout always shows real values and never interpolates.
+	// 指针 x 反算回 tick 空间并吸附到最近有数据点的 tick，读数永远是真实值，绝不插值。
 	const onMouseMove = (e: MouseEvent<HTMLCanvasElement>): void => {
 		const canvas = e.currentTarget;
 		const rect = canvas.getBoundingClientRect();

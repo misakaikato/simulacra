@@ -1,9 +1,17 @@
+// Bottom-right panel of the run page: integrity counters, cost, scenario hash, seed and log
+// path from the RunResult, plus the failure when the run failed; available once the run ended.
+// 运行页右下面板：RunResult 里的完整性计数、成本、场景哈希、种子与日志路径，运行失败时
+// 还有失败信息；运行结束后才可用。
+
 import { Fragment } from "react";
 import type { Cost, Integrity } from "../../../src/core/types";
 import type { RunSummary } from "../api";
 import { millis, short } from "../format";
 import { Empty } from "./Primitives";
 
+// Key lists are typed against Integrity and Cost so a renamed field fails to compile instead of
+// silently vanishing from the panel.
+// 键列表按 Integrity 与 Cost 类型约束，字段改名会编译失败，而不是悄悄从面板消失。
 const INTEGRITY_KEYS = [
 	"activated",
 	"ok",
