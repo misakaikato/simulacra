@@ -1,3 +1,9 @@
+// Compares the in-memory and SQLite event logs on the 100 000-agent cohort scenario: assembles
+// the simulation directly (bypassing runScenario) and times assembly and 20 ticks per mode.
+// Prints one markdown row per mode for bench/RESULTS.md.
+// 在十万 agent 的 cohort 场景上比较内存与 SQLite 两种事件日志：直接组装模拟（绕过 runScenario），
+// 每种模式分别给组装与 20 个 tick 计时，为 bench/RESULTS.md 各打印一行 markdown。
+
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
