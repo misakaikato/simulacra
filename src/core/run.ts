@@ -1,3 +1,10 @@
+// Run driver: prepares the output directory, wires the logger and gateway factory into
+// createSimulation, executes the scenario steps (run, intervene, questionnaire, checkpoint) and
+// writes result.json. resumeRun rebuilds the same drive from a checkpoint and copies the
+// history that precedes it.
+// run 驱动器：准备输出目录，把 logger 与网关工厂接入 createSimulation，执行场景步骤（run、intervene、
+// questionnaire、checkpoint）并写 result.json。resumeRun 从检查点重建同样的驱动并复制之前的历史。
+
 import { existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import {
@@ -64,6 +71,9 @@ export const withLlmOverride = (scenario: Scenario, override: Partial<LLMSpec>):
 	llm: { ...scenario.llm, ...override },
 });
 
+// Replaces the kind of every declared provider but keeps their names so executors still
+// resolve; a mock override therefore swaps rule opponents as well.
+// 替换所有已声明提供者的 kind 但保留名字，执行体仍能解析到它们；mock 覆盖因此连规则对手一起替换。
 export const withProviderOverride = (scenario: Scenario, kind: string): Scenario => {
 	const providers: Record<string, ProviderSpec> = {};
 	for (const [name, spec] of Object.entries(scenario.providers))
@@ -71,6 +81,9 @@ export const withProviderOverride = (scenario: Scenario, kind: string): Scenario
 	return { ...scenario, providers };
 };
 
+// A ticks override redistributes the budget across the existing run steps so interventions
+// between them keep their position; surplus ticks go to the last run step.
+// ticks 覆盖把预算重新分配到已有的 run 步骤上，夹在中间的干预保持原位；多出的 tick 归最后一个 run 步骤。
 export const withTicksOverride = (scenario: Scenario, ticks: number): Scenario => {
 	const runSteps = scenario.steps.filter((s) => s.kind === "run");
 	if (runSteps.length === 0)
@@ -124,6 +137,11 @@ const splitMeasurements = (
 	return { metrics, distributions };
 };
 
+// Run steps a checkpoint at `tick` already covers are dropped and the one straddling it is
+// shortened. Boundary steps that precede the resumed run step are dropped with the covered
+// ones, a documented limitation of resume; those after it are kept as written.
+// 检查点 `tick` 已覆盖的 run 步骤被丢弃，跨过它的那个被缩短。位于续跑起始 run 步骤之前的边界步骤随已覆盖
+// 的步骤一起丢弃，这是 resume 已知的局限；之后的边界步骤原样保留。
 export const remainingSteps = (steps: readonly Step[], tick: number): readonly Step[] => {
 	const out: Step[] = [];
 	let consumed = 0;
@@ -144,6 +162,9 @@ export const remainingSteps = (steps: readonly Step[], tick: number): readonly S
 	return out;
 };
 
+// The checkpoint event stores the path relative to the run directory so digests agree
+// across output locations; a failed save is a failure event, not an abort.
+// checkpoint 事件存相对 run 目录的路径，不同输出位置的 digest 因此一致；保存失败写 failure 事件，不中止。
 const checkpoint = (sim: Simulation, outDir: string, logger: Logger): void => {
 	const tick = sim.clock.now.tick;
 	const relative = join(CHECKPOINTS_DIR, String(tick));
@@ -172,6 +193,9 @@ const checkpoint = (sim: Simulation, outDir: string, logger: Logger): void => {
 	logger.info("checkpoint written", { tick, path: dir, worldHash: saved.value.worldHash });
 };
 
+// A checkpoint is written at most once per tick; the first one captures the initialised
+// world at tick 0, or the resume tick.
+// 每个 tick 最多写一次检查点；第一次写的是 tick 0（或续跑起点）的已初始化世界。
 const executeSteps = async (
 	sim: Simulation,
 	outDir: string,
@@ -218,6 +242,9 @@ interface Drive {
 	readonly beforeSteps?: (sim: Simulation) => void;
 }
 
+// Instantiation failures still produce a result.json with status failed and an empty
+// integrity, so the harness can count them like any other failed run.
+// 实例化失败同样产出 status 为 failed、integrity 为空的 result.json，harness 能像其它失败 run 一样计数。
 const drive = async (
 	drive: Drive,
 	registry: Registry,
@@ -334,6 +361,10 @@ const instantiateFailure = (excType: string, message: string): FailureInfo => ({
 	stack: "",
 });
 
+// A resumed run keeps the full history before its checkpoint so digest, inspect and replay
+// work on the new directory; content is copied wholesale since it is addressed by sha.
+// 续跑的 run 保留检查点之前的全部历史，digest、inspect 与回放在新目录上照常工作；content 按 sha 寻址，
+// 直接整体复制。
 const copyHistory = (source: EventLog, target: EventLog, upTo: EventId, tick: number): void => {
 	target.beginTick();
 	try {
@@ -351,6 +382,9 @@ const copyHistory = (source: EventLog, target: EventLog, upTo: EventId, tick: nu
 	}
 };
 
+// Steps come from the run's own scenario.json so a resumed run follows the original design;
+// the checkpoint fixes the starting tick, the ticks argument fixes how far to go.
+// 步骤取自该 run 自己的 scenario.json，续跑遵循原设计；检查点决定起始 tick，ticks 参数决定跑多远。
 export const resumeRun = async (
 	checkpointDir: string,
 	ticks: number,

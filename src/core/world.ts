@@ -1,3 +1,11 @@
+// Columnar world state and its single write path: typed column stores per entity, capacity
+// doubling, same-tick merge by the column's rule with dtype re-validation, swap-remove delete,
+// and a snapshot encoding whose canonical hash is the run's worldHash. Writes reach this file
+// only through applyEffects (resolver.ts) via the internal handle.
+// 列式世界状态与它唯一的写路径：每个实体的类型化列存储、容量翻倍、同 tick 按列的 merge 规则合并并
+// 重新校验 dtype、swap-remove 删除，以及规范化哈希即 worldHash 的快照编码。写入只经 applyEffects
+//（resolver.ts）通过内部句柄到达这里。
+
 import { hashOf } from "./hash";
 import { newEntityId } from "./ids";
 import { attachInternals, type WorldInternals } from "./internal/worldInternals";
@@ -22,6 +30,9 @@ export class IdCollision extends Error {
 	}
 }
 
+// Columns are namespaced by owner so two plugins may declare the same name; kernel columns
+// keep the bare name.
+// 列按 owner 命名空间化，两个插件可以声明同名列；内核列保留裸名字。
 export const qualifiedColumnName = (decl: Pick<ColumnDecl, "owner" | "name">): string =>
 	decl.owner === "kernel" ? decl.name : `${decl.owner}.${decl.name}`;
 
@@ -30,6 +41,11 @@ const NEVER_WRITTEN = -1;
 const INT32_MIN = -2147483648;
 const INT32_MAX = 2147483647;
 
+// writtenAt remembers the tick of each cell's last write; a second write in the same tick
+// merges instead of replacing, which is what makes merge rules hold across two applyEffects
+// calls within one tick.
+// writtenAt 记录每个单元格最后一次写入的 tick；同一 tick 的第二次写入走合并而不是替换，
+// merge 规则因此在一个 tick 内的两次 applyEffects 之间依然成立。
 interface StoreBase {
 	readonly decl: ColumnDecl;
 	readonly qualified: string;
@@ -59,6 +75,11 @@ const isStringList = (v: unknown): v is readonly string[] =>
 const describe = (v: Scalar): string =>
 	v === null ? "null" : Array.isArray(v) ? "string[]" : typeof v;
 
+// The dtype gate for every value entering a cell: declared defaults, created rows, effects
+// and merge results all pass through it, so a typed array never holds an unrepresentable
+// value.
+// 所有进入单元格的值都要过的 dtype 关卡：声明的默认值、创建的行、效果与合并结果都经它检查，
+// 类型化数组因此永远不会存入无法表示的值。
 const coerce = (dtype: ColumnDtype, value: Scalar): Result<Scalar, string> => {
 	switch (dtype) {
 		case "f64":
@@ -85,6 +106,10 @@ const coerce = (dtype: ColumnDtype, value: Scalar): Result<Scalar, string> => {
 	}
 };
 
+// sum and max are numeric (bool as logical or), append is for str and strlist; mismatches
+// are refused at declare so they can never surface as a runtime rejection.
+// sum 与 max 只对数值有意义（bool 视为逻辑或），append 只对 str 与 strlist；不匹配在 declare 时拒绝，
+// 不会拖到运行时才暴露。
 const validMerge = (decl: ColumnDecl): boolean => {
 	switch (decl.merge) {
 		case "last":
@@ -181,6 +206,9 @@ const mergeValues = (store: ColumnStore, existing: Scalar, incoming: Scalar): Sc
 	}
 };
 
+// A merged value is re-validated so, for instance, an i32 sum that overflows rejects the
+// whole effect instead of wrapping silently.
+// 合并结果重新校验，例如 i32 求和溢出时整条效果被拒绝，而不是静默回绕。
 const mergeChecked = (
 	store: ColumnStore,
 	existing: Scalar,
@@ -203,6 +231,9 @@ const growNumeric = <A extends Float64Array | Int32Array | Uint8Array>(
 	return next;
 };
 
+// Numeric stores grow by doubling and copying; string stores are plain arrays that grow
+// on their own.
+// 数值存储按翻倍扩容并复制；字符串存储是普通数组，自行增长。
 const ensureCapacity = (table: EntityTable, needed: number): void => {
 	if (needed <= table.capacity) return;
 	let capacity = Math.max(INITIAL_CAPACITY, table.capacity);
@@ -229,6 +260,10 @@ const ensureCapacity = (table: EntityTable, needed: number): void => {
 	table.capacity = capacity;
 };
 
+// Numeric columns serialise as little-endian bytes in base64: byte-exact for f64 (no decimal
+// round trip), compact, and platform-independent so worldHash agrees everywhere.
+// 数值列序列化为 base64 的小端字节：f64 逐字节精确（不经十进制往返）、紧凑，且与平台无关，
+// worldHash 在任何地方都一致。
 const encodeNumeric = (store: ColumnStore, count: number): string => {
 	switch (store.dtype) {
 		case "f64": {
@@ -297,6 +332,9 @@ class ColumnarWorld implements World, WorldInternals {
 		return this.tables.get(entity)?.ids.length ?? 0;
 	}
 
+	// The view is live: it reads the store at call time, so a plugin holding one across a tick
+	// sees the effects applied since.
+	// 视图是活的：调用时才读取存储，跨 tick 持有它的插件能看到之后应用的效果。
 	column<T extends Scalar>(entity: string, name: string): ReadonlyColumn<T> {
 		const table = this.tables.get(entity);
 		const store = table?.columns.get(name);
@@ -343,6 +381,10 @@ class ColumnarWorld implements World, WorldInternals {
 		return hashOf(this.snapshot());
 	}
 
+	// Re-declaring an identical column is idempotent so modules and executors sharing a column
+	// need no coordination; any difference in dtype, merge, owner or default is a conflict.
+	// 重复声明完全相同的列是幂等的，共享一列的模块与执行体无需协调；dtype、merge、owner 或默认值
+	// 任一不同即冲突。
 	declare(decl: ColumnDecl): Result<void, ColumnConflict> {
 		const qualified = qualifiedColumnName(decl);
 		if (!validMerge(decl))
@@ -372,6 +414,9 @@ class ColumnarWorld implements World, WorldInternals {
 		return ok(undefined);
 	}
 
+	// IdCollision is thrown, not returned: two equal ULIDs from one rng means the id generator
+	// is broken, which is a kernel bug.
+	// IdCollision 抛出而不是返回：同一 rng 产出两个相同的 ULID 说明 id 生成器坏了，属于内核 bug。
 	create(
 		entity: string,
 		rows: readonly Readonly<Record<string, Scalar>>[],
@@ -401,6 +446,11 @@ class ColumnarWorld implements World, WorldInternals {
 		return { version: 1, entities, env };
 	}
 
+	// null in a row means use the default; a value for an undeclared column rejects the row so
+	// a typo cannot silently drop data. New rows are stamped NEVER_WRITTEN so the first set in
+	// the creating tick replaces rather than merges.
+	// 行里的 null 表示取默认值；写到未声明列的值会拒绝整行，拼写错误不会悄悄丢数据。新行盖
+	// NEVER_WRITTEN 戳，创建它的那个 tick 内的首次 set 是替换而不是合并。
 	insertRow(
 		entity: string,
 		id: EntityId,
@@ -429,6 +479,9 @@ class ColumnarWorld implements World, WorldInternals {
 		return ok(undefined);
 	}
 
+	// Swap-remove: the last row moves into the hole, so ids() order changes but deterministically
+	// and typed arrays never need compaction.
+	// swap-remove：最后一行移入空位，ids() 的顺序会变但是确定的，类型化数组永远不需要压缩。
 	deleteRow(entity: string, id: EntityId): Result<void, string> {
 		const table = this.tables.get(entity);
 		if (table === undefined) return err(`unknown entity '${entity}'`);
@@ -452,6 +505,9 @@ class ColumnarWorld implements World, WorldInternals {
 		return ok(undefined);
 	}
 
+	// null resets to the default; a write in the same tick as the previous one merges by the
+	// column's rule.
+	// null 重置为默认值；与上一次写入同 tick 的写入按列的规则合并。
 	setCell(
 		entity: string,
 		id: EntityId,
@@ -473,6 +529,9 @@ class ColumnarWorld implements World, WorldInternals {
 		return ok(undefined);
 	}
 
+	// The whole batch is validated before anything is written so a bad value at position k
+	// leaves the column untouched; repeated ids inside one batch merge with each other in order.
+	// 整批先校验再写入，第 k 个值有误时整列保持不变；同一批内重复的 id 按顺序相互合并。
 	setCells(
 		entity: string,
 		column: string,
@@ -616,6 +675,9 @@ class ColumnarWorld implements World, WorldInternals {
 	}
 }
 
+// The declared default was validated at declare; the fallback only guards a store whose
+// declaration was tampered with after the fact.
+// 声明的默认值在 declare 时已校验；回退分支只防御声明事后被篡改的存储。
 const defaultOf = (store: ColumnStore): Scalar => {
 	const coerced = coerce(store.dtype, store.decl.default);
 	return coerced.ok ? coerced.value : readCell(newStore(store.decl, store.qualified, 1), 0);
@@ -627,6 +689,11 @@ export const createWorld = (): World => {
 	return world;
 };
 
+// Columns are declared in snapshot order and ids inserted before data is loaded, so column
+// order, id order and row key order match the original world and prompts rendered after
+// resume hash identically to a straight run.
+// 按快照顺序声明列、先插入 id 再装载数据，列序、id 序与行键序都与原世界一致，续跑后渲染的
+// prompt 与直跑的哈希相同。
 export const restoreWorld = (snap: WorldSnapshot): World => {
 	const world = new ColumnarWorld();
 	attachInternals(world, world);

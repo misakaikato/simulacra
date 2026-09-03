@@ -1,3 +1,9 @@
+// Checkpoint contract: seven JSON files written only at a tick boundary, with meta.json
+// carrying scenarioHash, digest, lastEventId and worldHash. Loading verifies the scenario
+// hash (ConfigDrift) and that world.json re-hashes to meta's worldHash (Corrupt).
+// 检查点契约：七个 JSON 文件，只在 tick 边界写入，meta.json 记录 scenarioHash、digest、lastEventId
+// 与 worldHash。装载时校验场景哈希（ConfigDrift）以及 world.json 重新哈希后等于 meta 的 worldHash（Corrupt）。
+
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { z } from "zod";
@@ -24,6 +30,9 @@ export const CHECKPOINT_FILES = {
 	meta: "meta.json",
 } as const;
 
+// clock carries only now: scheduled callbacks are not serialised, resume re-schedules them
+// from the remaining scenario steps. rngPaths is opaque to this module.
+// clock 只带 now：已调度的回调不序列化，续跑时由剩余的 Scenario 步骤重新调度。rngPaths 对本模块不透明。
 export interface CheckpointInput {
 	readonly world: World;
 	readonly clock: { readonly now: LogicalTime };
@@ -57,6 +66,10 @@ export type CheckpointError = {
 const describeError = (e: unknown): string =>
 	e instanceof Error ? `${e.name}: ${e.message}` : String(e);
 
+// substep and seq must both be zero: a checkpoint inside a tick would capture a world some
+// executors have acted on and others have not, and replay could never reproduce it.
+// substep 与 seq 必须都为零：tick 中途的检查点会捕获一个部分执行体已行动、部分未行动的世界，
+// 回放永远无法复现它。
 export const saveCheckpoint = (
 	state: CheckpointInput,
 	dir: string,
@@ -123,6 +136,9 @@ const readJson = <S extends z.ZodType>(
 	return ok(checked.data);
 };
 
+// Drift is checked before anything else is parsed so a mismatched scenario fails fast; the
+// world hash and clock tick checks catch edited or truncated files.
+// 先于其它文件校验漂移，场景不匹配时立即失败；worldHash 与时钟 tick 的核对捕获被改动或截断的文件。
 export const loadCheckpoint = (
 	dir: string,
 	scenarioHash: string,

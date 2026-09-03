@@ -1,3 +1,8 @@
+// Logical clock with a binary-heap schedule: callbacks run when now reaches their time, in
+// (time, priority, insertion) order; cancel leaves a tombstone that due() skips.
+// 带二叉堆日程表的逻辑时钟：回调在 now 到达其时间时执行，按 (time, priority, insertion) 排序；
+// cancel 留下墓碑，由 due() 跳过。
+
 import type { Clock } from "./protocols";
 import { TIME_ZERO, compareTime } from "./time";
 import type { LogicalTime } from "./types";
@@ -11,6 +16,9 @@ interface Entry {
 	readonly fn: () => Promise<void>;
 }
 
+// Heap order: earlier time, then lower priority number, then insertion order so equal
+// entries stay first-in first-out.
+// 堆序：时间早者先，其次 priority 数值小者先，再按插入顺序，使相同条目保持先进先出。
 const before = (a: Entry, b: Entry): boolean => {
 	const byTime = compareTime(a.at, b.at);
 	if (byTime !== 0) return byTime < 0;
@@ -86,6 +94,9 @@ class LogicalClock implements Clock {
 		return this.current;
 	}
 
+	// Only seq is consumed by events; the simulation advances substep between phases so events
+	// of different phases never share a time.
+	// 只有 seq 被事件消耗；模拟在阶段之间推进 substep，不同阶段的事件因此永不共享同一时间。
 	nextSeq(): number {
 		this.current = { ...this.current, seq: this.current.seq + 1 };
 		return this.current.seq;
@@ -109,10 +120,16 @@ class LogicalClock implements Clock {
 		return handle;
 	}
 
+	// cancel only forgets the handle; the heap entry is dropped lazily when it surfaces, which
+	// keeps cancel O(1).
+	// cancel 只删除句柄；堆里的条目在浮到顶部时才被丢弃，cancel 因此是 O(1)。
 	cancel(handle: string): void {
 		this.pending.delete(handle);
 	}
 
+	// Drains everything at or before now in one call; callbacks are returned rather than invoked
+	// so the simulation can bracket each one with failure recording.
+	// 一次取出所有不晚于 now 的回调；只返回而不执行，模拟才能为每个回调包上失败记录。
 	due(): readonly (() => Promise<void>)[] {
 		const out: (() => Promise<void>)[] = [];
 		for (;;) {

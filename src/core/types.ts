@@ -1,3 +1,10 @@
+// Every public data type of the kernel: brands, logical time, Result, the scenario family
+// inferred from the zod schemas, world effects and snapshots, the event union, decisions and
+// the harness records. Types only; the invariants they describe are enforced in world.ts and
+// simulation.ts.
+// 内核全部公共数据类型：品牌类型、逻辑时间、Result、由 zod schema 推导的 Scenario 族、世界效果与快照、
+// 事件联合、决策与 harness 记录。此处只有类型；它们描述的不变量由 world.ts 与 simulation.ts 强制。
+
 import type { z } from "zod";
 import type { EventLog, GraphView, WorldView } from "./protocols";
 import type {
@@ -23,28 +30,45 @@ import type {
 
 // Base types
 
+// Brands keep entity, event and run ids apart at compile time; all three are ULID strings
+// handed out only by world.create and the event rng, never by callers.
+// 品牌类型在编译期区分实体、事件与运行 id；三者都是 ULID 字符串，只由 world.create 与事件 rng 分配。
 export type Brand<T, B extends string> = T & { readonly __brand: B };
 export type EntityId = Brand<string, "EntityId">;
 export type EventId = Brand<string, "EventId">;
 export type RunId = Brand<string, "RunId">;
 
+// Ordered lexicographically: substep separates the phases of one tick, seq orders events
+// inside a phase. No wall clock enters simulation semantics.
+// 按字典序比较：substep 区分一个 tick 内的阶段，seq 排列阶段内的事件。墙钟时间不进入模拟语义。
 export interface LogicalTime {
 	readonly tick: number;
 	readonly substep: number;
 	readonly seq: number;
 }
 
+// Business failures travel as values; exceptions are reserved for kernel bugs.
+// 业务失败以值传递；异常只留给内核 bug。
 export type Result<T, E> =
 	{ readonly ok: true; readonly value: T } | { readonly ok: false; readonly error: E };
 
+// Scalar is what a world cell can hold; JsonValue is what events, params and plugin state
+// carry. Keeping them apart stops arbitrary JSON from reaching a typed column.
+// Scalar 是世界单元格能存的值；JsonValue 是事件、参数与插件状态携带的值。分开两者是为了阻止任意 JSON
+// 流入带类型的列。
 export type Scalar = number | string | boolean | null | readonly string[];
 export type JsonValue =
 	string | number | boolean | null | readonly JsonValue[] | { readonly [k: string]: JsonValue };
 export type JsonObject = { readonly [k: string]: JsonValue };
 
+// Who produced a decision or event; kernel marks what the simulation itself emits.
+// 决策或事件由谁产生；kernel 标记模拟自身发出的事件。
 export type Provenance =
 	"llm" | "surrogate" | "prototype" | "cache" | "rule" | "manual" | "interview" | "kernel";
 
+// Scenario values are frozen to the leaf because plugins share the scenario object with the
+// kernel; a hot override replaces the object rather than mutating it.
+// Scenario 值冻结到叶子，因为插件与内核共享同一个 scenario 对象；热覆盖用整体替换而不是原地修改。
 export type DeepReadonly<T> = T extends (...args: never[]) => unknown
 	? T
 	: T extends readonly [unknown, ...unknown[]]
@@ -85,6 +109,12 @@ export interface FailureInfo {
 	readonly at?: LogicalTime;
 }
 
+// complete holds when no tick threw IncompleteTick and activated === ok + failed. parseFailures
+// is the subset of failed caused by parse or validation; llmFailures counts gateway failures
+// written as failure events; droppedEffects counts effects applyEffects rejected.
+// complete 成立的条件是没有 tick 抛出 IncompleteTick 且 activated === ok + failed。parseFailures 是
+// failed 中由解析或校验引起的子集；llmFailures 是写成 failure 事件的网关失败数；droppedEffects 是
+// applyEffects 拒绝的效果数。
 export interface Integrity {
 	readonly activated: number;
 	readonly ok: number;
@@ -97,6 +127,8 @@ export interface Integrity {
 	readonly complete: boolean;
 }
 
+// Only real network calls enter cost; replay hits and rejected calls contribute nothing.
+// 只有真实网络请求计入 cost；replay 命中与被拒绝的调用不计。
 export interface Cost {
 	readonly llmCalls: number;
 	readonly promptTokens: number;
@@ -105,6 +137,8 @@ export interface Cost {
 	readonly wallMs: number;
 }
 
+// A failed run still carries full integrity and cost; failure names the stage that broke.
+// 失败的 run 仍带完整的 integrity 与 cost；failure 指明出错的阶段。
 export interface RunResult {
 	readonly runId: RunId;
 	readonly scenarioHash: string;
@@ -122,6 +156,10 @@ export interface RunResult {
 
 export type MergeRule = "last" | "sum" | "max" | "append";
 
+// merge settles two writes to one cell within a tick. Declared columns are namespaced
+// `${owner}.${name}` unless the owner is the kernel.
+// merge 裁决同一 tick 内对同一单元格的两次写入。声明的列以 `${owner}.${name}` 命名空间化，
+// owner 为 kernel 时除外。
 export interface ColumnDecl {
 	readonly entity: string;
 	readonly name: string;
@@ -131,6 +169,10 @@ export interface ColumnDecl {
 	readonly merge: MergeRule;
 }
 
+// The only vocabulary of change. Every effect names the event that caused it; setColumn is
+// the batch form cohort transitions use so a 100k-agent update is one effect, not 100k.
+// 变更的唯一词汇表。每个效果都记录引起它的事件；setColumn 是 cohort 转移使用的批量形式，
+// 十万 agent 的更新是一个效果而不是十万个。
 export type Effect =
 	| {
 			readonly op: "set";
@@ -194,6 +236,9 @@ export interface EffectReport {
 	readonly rejected: readonly EffectRejection[];
 }
 
+// Numeric columns are serialised as base64 little-endian bytes, string columns as arrays;
+// the encoding is platform-independent so a live run and its replay hash identically.
+// 数值列序列化为 base64 小端字节，字符串列为数组；编码与平台无关，实时运行与回放的哈希因此一致。
 export type ColumnSnapshot =
 	| { readonly decl: ColumnDecl; readonly encoding: "base64"; readonly data: string }
 	| { readonly decl: ColumnDecl; readonly encoding: "strings"; readonly data: readonly string[] }
@@ -219,6 +264,9 @@ export type WorldSnapshot = {
 
 export type ActivationMode = "llm" | "rule" | "manual" | "interview";
 
+// seedPath records which rng path produced the event id; parent is the causal link that
+// chain() and inspect follow.
+// seedPath 记录产生事件 id 的 rng 路径；parent 是 chain() 与 inspect 追踪的因果链接。
 export interface EventBase {
 	readonly eventId: EventId;
 	readonly runId: RunId;
@@ -266,6 +314,7 @@ export type Event =
 	  })
 	// One event per executor and tick for executors that declare batchEvents; agentIds are the
 	// activated agents the executor observed, in request order.
+	// 声明 batchEvents 的执行体每 tick 一条；agentIds 是该执行体观察到的激活 agent，按请求顺序排列。
 	| (EventBase & {
 			readonly kind: "observation_batch";
 			readonly payload: {
@@ -277,6 +326,8 @@ export type Event =
 	  })
 	// actions align with agentIds; parseFailures counts the agents in this batch whose
 	// failure was a parse or validation failure, the same subset Integrity.parseFailures counts.
+	// actions 与 agentIds 对齐；parseFailures 统计本批中因解析或校验失败的 agent 数，
+	// 与 Integrity.parseFailures 同口径。
 	| (EventBase & {
 			readonly kind: "decision_batch";
 			readonly payload: {
@@ -290,6 +341,8 @@ export type Event =
 			};
 	  })
 	| (EventBase & {
+			// params records the structured mode actually used; recorded marks a replayed response.
+			// params 记录实际使用的结构化模式；recorded 标记来自录制回放的响应。
 			readonly kind: "llm_call";
 			readonly payload: {
 				readonly promptHash: string;
@@ -359,6 +412,7 @@ export interface EventFilter {
 }
 
 // Batch events carry no agentId; membership is by payload.agentIds, so the filter has none.
+// 批量事件没有 agentId；成员关系由 payload.agentIds 决定，所以该过滤器没有 agentId 字段。
 export type BatchEventFilter = Omit<EventFilter, "agentId">;
 
 // Decisions
@@ -375,6 +429,10 @@ export interface RenderedPrompt {
 	readonly hash: string;
 }
 
+// features is the cohort path (no prompt), prompt the focal path; observationEvent is the
+// parent every decision or failure event for this request hangs from.
+// features 是 cohort 路径（无 prompt），prompt 是 focal 路径；observationEvent 是本请求的
+// 决策或失败事件挂靠的父事件。
 export interface DecisionRequest {
 	readonly agentId: EntityId;
 	readonly t: LogicalTime;
@@ -386,6 +444,9 @@ export interface DecisionRequest {
 	readonly prompt?: RenderedPrompt;
 }
 
+// parseOk false means the provider fell back to a default action; cost is the share of
+// gateway spend attributed to this agent.
+// parseOk 为 false 表示提供者回退到了默认动作；cost 是归属到该 agent 的网关开销份额。
 export interface Decision {
 	readonly agentId: EntityId;
 	readonly action: string;
@@ -421,6 +482,9 @@ export interface ActionCall<A = JsonObject> {
 	readonly cause: EventId;
 }
 
+// manualCalls supplies the ActionCall for agents activated in manual mode; the kernel
+// dispatches them without observe or decide.
+// manualCalls 为 manual 模式激活的 agent 提供 ActionCall；内核直接派发，不经 observe 与 decide。
 export interface Activation {
 	readonly agents: Readonly<Record<EntityId, ActivationMode>>;
 	readonly manualCalls?: Readonly<Record<EntityId, ActionCall>>;
@@ -447,6 +511,10 @@ export interface Condition {
 	readonly flags?: readonly ConditionFlag[];
 }
 
+// holmP is mwuP after Holm correction within one metric; directionFlip is judged against
+// the hypothesis outcome direction and is false when there is no hypothesis.
+// holmP 是同一指标内经 Holm 校正后的 mwuP；directionFlip 依据假设中 outcome 的方向判定，
+// 无假设时恒为 false。
 export interface PairwiseTest {
 	readonly metric: string;
 	readonly a: string;
@@ -495,6 +563,9 @@ export interface AuditOptionsSummary {
 	readonly providerOverride?: string;
 }
 
+// evidenceGrade is a function of replications, axis levels and model count, never of the
+// p-values: it grades the design, not the result.
+// evidenceGrade 只取决于复制数、轴的水平数与模型数，与 p 值无关：它评的是设计，不是结果。
 export interface AuditReport {
 	readonly planHash: string;
 	readonly plan: AuditPlanSummary;

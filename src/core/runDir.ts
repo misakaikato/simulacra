@@ -1,3 +1,8 @@
+// Layout of a run directory: scenario.json, events.sqlite and checkpoints/<tick>. The helpers
+// here open those files; they know nothing about running a simulation.
+// run 目录的布局：scenario.json、events.sqlite 与 checkpoints/<tick>。这里的辅助函数只负责打开这些
+// 文件，不涉及模拟的运行。
+
 import { existsSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { eventLogPath, openSqliteEventLog } from "./log";
@@ -15,6 +20,8 @@ export const checkpointDirOf = (runDir: string, tick: number): string =>
 export const runDirOfCheckpoint = (checkpointDir: string): string =>
 	dirname(dirname(resolve(checkpointDir)));
 
+// Numeric sort, so tick 10 follows tick 9 and replay picks the right latest checkpoint.
+// 按数值排序，tick 10 排在 tick 9 之后，回放才能选中正确的最近检查点。
 export const checkpointTicks = (runDir: string): readonly number[] => {
 	const dir = join(runDir, CHECKPOINTS_DIR);
 	if (!existsSync(dir)) return [];

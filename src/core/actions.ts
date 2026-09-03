@@ -1,3 +1,9 @@
+// Action registry and the zod-to-JSON-schema converter: one defineAction declaration yields the
+// LLM tool schema, argument validation and the resolver. Exactly one registered action is the
+// fallback.
+// 动作注册表与 zod 到 JSON schema 的转换器：一次 defineAction 声明同时产出 LLM 工具 schema、参数校验
+// 与解析器。注册的动作中恰有一个是 fallback。
+
 import { z } from "zod";
 import type {
 	ActionDef,
@@ -11,6 +17,10 @@ import type { ActionCall, JsonObject, JsonValue, Result } from "./types";
 
 export const defineAction = <P extends z.ZodType>(def: ActionDef<P>): ActionDef<P> => def;
 
+// Thrown by an action's resolve when the call is well-formed but world state forbids it
+// (replying to a missing post, say); the kernel counts it as rejectedActions, not a crash.
+// 调用格式合法但世界状态不允许时（例如回复不存在的帖子）由动作的 resolve 抛出；内核计入
+// rejectedActions，不当作崩溃。
 export class ActionRejected extends Error {
 	constructor(message: string) {
 		super(message);
@@ -42,6 +52,11 @@ const classic = (inner: unknown): z.ZodType => {
 	throw new TypeError("nested schema is not a zod classic schema");
 };
 
+// Deliberately minimal: only the zod types an LLM tool schema can express. Anything else is
+// a TypeError at registration, so an unsupported schema fails when the plugin loads rather
+// than when an agent decides.
+// 刻意保持最小：只覆盖 LLM 工具 schema 能表达的 zod 类型。其它类型在注册时抛 TypeError，
+// 不支持的 schema 在插件装载时失败，而不是在 agent 决策时失败。
 const convert = (schema: z.ZodType): JsonObject => {
 	if (schema instanceof z.ZodOptional) return convert(classic(schema.unwrap()));
 	if (schema instanceof z.ZodDefault) {
@@ -97,6 +112,10 @@ class MapActionRegistry implements ActionRegistry {
 	private readonly schemas = new Map<string, JsonObject>();
 	private fallbackName: string | undefined;
 
+	// params must be an object schema because tool schemas and prompt instructions both assume
+	// named parameters; the check throws since it is a plugin author error, not data.
+	// params 必须是对象 schema，因为工具 schema 与 prompt 指令都假定参数有名字；这是插件作者的错误
+	// 而非数据错误，所以直接抛出。
 	register(a: ActionDef): Result<void, DuplicateAction | DuplicateFallback> {
 		if (this.defs.has(a.name)) return err({ kind: "DuplicateAction", name: a.name });
 		if (a.fallback && this.fallbackName !== undefined)
@@ -122,6 +141,8 @@ class MapActionRegistry implements ActionRegistry {
 		return this.fallbackName === undefined ? undefined : this.defs.get(this.fallbackName);
 	}
 
+	// Schemas are converted once at registration; an unknown name here is kernel misuse.
+	// schema 在注册时转换一次；这里出现未知名字属于内核误用。
 	toolSchemas(names: readonly string[]): readonly JsonValue[] {
 		return names.map((name) => {
 			const schema = this.schemas.get(name);

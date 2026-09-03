@@ -1,3 +1,9 @@
+// Prompt rendering for focal agents. PromptOptions are the representation-level perturbation
+// axes (persona format, instruction order, role placement, naming, memory representation,
+// context window), so every option must change the rendered text and therefore the promptHash.
+// focal agent 的 prompt 渲染。PromptOptions 是表征级扰动轴（persona 格式、指令顺序、角色位置、命名、
+// 记忆表示、上下文窗口），每个选项都必须改变渲染文本，从而改变 promptHash。
+
 import { hashOf } from "./hash";
 import type {
 	EntityId,
@@ -46,6 +52,10 @@ export interface RenderedPromptWithMeta extends RenderedPrompt {
 
 const GENERIC_SYSTEM = "You are a participant in a social simulation.";
 
+// The structured-output schema pins the action to the action space as an enum; args stays
+// an open object because each action's parameter schema is delivered in the prompt text.
+// 结构化输出 schema 用枚举把 action 钉在动作空间内；args 保持开放对象，因为各动作的参数 schema
+// 通过 prompt 文本给出。
 export const decisionSchema = (actionNames: readonly string[]): JsonObject => ({
 	type: "object",
 	properties: {
@@ -140,6 +150,9 @@ const roleBlock = (input: PromptInput, options: PromptOptions): string => {
 	return parts.filter((p) => p.length > 0).join("\n\n");
 };
 
+// rolePlacement decides whether persona and instructions live in the system message or are
+// prepended to the user turn behind a generic system line.
+// rolePlacement 决定 persona 与指令放在 system 消息里，还是放在通用 system 行之后的 user 轮开头。
 const assemble = (
 	input: PromptInput,
 	options: PromptOptions,
@@ -165,6 +178,11 @@ const assemble = (
 const charsOf = (messages: readonly PromptMessage[]): number =>
 	messages.reduce((n, m) => n + m.content.length, 0);
 
+// Trimming drops the oldest memory entries one at a time until the prompt fits; persona,
+// instructions, observation and actions are never dropped, so a prompt still over budget
+// with no memory left is marked truncated rather than emptied. hash covers the messages only.
+// 裁剪逐条丢弃最旧的记忆直到 prompt 装下；persona、指令、观察与动作从不丢弃，记忆已空仍超预算的
+// prompt 标记 truncated 而不是裁成空。hash 只覆盖 messages。
 export const renderPrompt = (
 	input: PromptInput,
 	options: PromptOptions,

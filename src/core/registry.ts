@@ -1,3 +1,9 @@
+// Plugin registry: one NamedRegistry per slot mapping a kind string to a factory. Registration
+// returns a Result so duplicates cannot silently shadow a plugin; parseOptions turns a plugin's
+// option-schema failure into a PluginError with paths.
+// 插件注册表：每个槽位一个 NamedRegistry，把 kind 字符串映射到工厂。注册返回 Result，重复项不会悄悄
+// 遮蔽已有插件；parseOptions 把插件选项 schema 的校验失败转成带路径的 PluginError。
+
 import type { z } from "zod";
 import { createActionRegistry } from "./actions";
 import type {

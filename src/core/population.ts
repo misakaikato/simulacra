@@ -1,3 +1,9 @@
+// Population construction: persona fields become `persona.*` columns of the agent table, rows
+// come from synthetic sampling or a CSV/JSON source, stratify quotas are applied by a seeded
+// shuffle, and the kernel column agent.ordinal records creation order.
+// 人口构建：persona 字段落成 agent 表的 `persona.*` 列，行来自合成采样或 CSV/JSON 数据源，分层配额
+// 由带种子的洗牌分配，内核列 agent.ordinal 记录创建序号。
+
 import { readFileSync } from "node:fs";
 import { isAbsolute } from "node:path";
 import type { ColumnConflict, Rng, World } from "./protocols";
@@ -34,6 +40,9 @@ const defaultFor = (dtype: ColumnDtype): Scalar => {
 const fail = (message: string): Result<never, PopulationError> =>
 	err({ kind: "PopulationError", message });
 
+// Source files are text, so coercion accepts the spellings CSV produces: numeric strings,
+// true/false/1/0, pipe-joined lists.
+// 数据源文件是文本，强制转换接受 CSV 产生的写法：数字字符串、true/false/1/0、竖线连接的列表。
 export const coerceScalar = (dtype: ColumnDtype, raw: unknown): Result<Scalar, string> => {
 	switch (dtype) {
 		case "f64":
@@ -107,6 +116,8 @@ const synthesize = (spec: PopulationSpec, rng: Rng): Result<readonly Row[], Popu
 	return ok(rows);
 };
 
+// Small RFC 4180 reader: quoted fields, doubled quotes, CRLF; no dependency.
+// 精简的 RFC 4180 读取器：支持引号字段、双引号转义、CRLF；不引依赖。
 export const parseCsv = (text: string): readonly Readonly<Record<string, string>>[] => {
 	const records: string[][] = [];
 	let record: string[] = [];
@@ -198,6 +209,9 @@ const loadedRows = (
 	return ok(rows);
 };
 
+// Sampling and gap-filling use separately labelled forks so a field added to a source file
+// does not shift the values sampled for other fields.
+// 采样与补空使用不同标签的 fork，数据源文件新增一个字段不会改变其它字段采样到的值。
 const sourceRows = (spec: PopulationSpec, rng: Rng): Result<readonly Row[], PopulationError> => {
 	if (spec.source.kind === "synthetic") return synthesize(spec, rng.fork(keyFromLabel("sample")));
 	const raw = readSource(spec.source);
@@ -205,6 +219,8 @@ const sourceRows = (spec: PopulationSpec, rng: Rng): Result<readonly Row[], Popu
 	return loadedRows(spec, raw.value, rng.fork(keyFromLabel("fill")));
 };
 
+// Largest-remainder apportionment so quota counts sum exactly to n; ties break by index.
+// 最大余数法分配，配额计数之和恰为 n；余数相同按下标决定。
 const apportion = (n: number, weights: readonly number[]): readonly number[] => {
 	const total = weights.reduce((a, b) => a + b, 0);
 	if (!(total > 0)) return weights.map(() => 0);
@@ -222,6 +238,9 @@ const apportion = (n: number, weights: readonly number[]): readonly number[] => 
 	return counts;
 };
 
+// Quota values are shuffled with a per-field fork and assigned by row position, which keeps
+// every other sampled field of the row untouched.
+// 配额值用按字段的 fork 洗牌后按行位置赋值，行里其它已采样字段保持不变。
 const stratified = (
 	spec: PopulationSpec,
 	rows: readonly Row[],
