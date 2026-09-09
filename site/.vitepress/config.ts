@@ -38,17 +38,30 @@ const envOr = (name: string, fallback: string): string => {
 const base = normalizeBase(envOr("SITE_BASE", DEFAULT_BASE));
 const origin = envOr("SITE_ORIGIN", DEFAULT_ORIGIN).replace(/\/+$/, "");
 
-const guideItems = (suffix = ""): DefaultTheme.SidebarItem[] => [
-	{ text: `Scenarios${suffix}`, link: "/guide/scenarios" },
-	{ text: `Audits${suffix}`, link: "/guide/audits" },
-	{ text: `Plugins${suffix}`, link: "/guide/plugins" },
+const guideItems: DefaultTheme.SidebarItem[] = [
+	{ text: "Scenarios", link: "/guide/scenarios" },
+	{ text: "Audits", link: "/guide/audits" },
+	{ text: "Plugins", link: "/guide/plugins" },
 ];
 
-const entryItems = (suffix = ""): DefaultTheme.SidebarItem[] => [
-	{ text: `CLI${suffix}`, link: "/guide/cli" },
-	{ text: `HTTP API${suffix}`, link: "/guide/api" },
-	{ text: `MCP${suffix}`, link: "/guide/mcp" },
-	{ text: `GUI${suffix}`, link: "/guide/gui" },
+const entryItems: DefaultTheme.SidebarItem[] = [
+	{ text: "CLI", link: "/guide/cli" },
+	{ text: "HTTP API", link: "/guide/api" },
+	{ text: "MCP", link: "/guide/mcp" },
+	{ text: "GUI", link: "/guide/gui" },
+];
+
+const zhGuideItems: DefaultTheme.SidebarItem[] = [
+	{ text: "场景", link: "/zh/guide/scenarios" },
+	{ text: "审计", link: "/zh/guide/audits" },
+	{ text: "插件", link: "/zh/guide/plugins" },
+];
+
+const zhEntryItems: DefaultTheme.SidebarItem[] = [
+	{ text: "CLI", link: "/zh/guide/cli" },
+	{ text: "HTTP API", link: "/zh/guide/api" },
+	{ text: "MCP", link: "/zh/guide/mcp" },
+	{ text: "GUI", link: "/zh/guide/gui" },
 ];
 
 const nav: DefaultTheme.NavItem[] = [
@@ -62,29 +75,28 @@ const nav: DefaultTheme.NavItem[] = [
 const sidebar: DefaultTheme.Sidebar = {
 	"/guide/": [
 		{ text: "Start", items: [{ text: "Getting started", link: "/guide/getting-started" }] },
-		{ text: "Reference", items: guideItems() },
-		{ text: "Entry points", items: entryItems() },
+		{ text: "Reference", items: guideItems },
+		{ text: "Entry points", items: entryItems },
 	],
 };
 
-// Chinese pages exist for the landing page, the quick start and the services page; every other
-// entry links to the English page and says so.
-// 中文页面只有首页、快速开始与咨询页；其余条目链接到英文页并注明。
-const EN = " (English)";
+// Every English page has a Chinese counterpart under /zh/, so the Chinese nav and sidebar stay
+// inside the Chinese locale.
+// 每个英文页在 /zh/ 下都有对应的中文页，所以中文导航与侧栏只指向中文页。
 
 const zhNav: DefaultTheme.NavItem[] = [
 	{ text: "指南", link: "/zh/guide/getting-started", activeMatch: "^/zh/guide/" },
-	{ text: `示例${EN}`, link: "/examples" },
-	{ text: `基准${EN}`, link: "/benchmarks" },
-	{ text: `报告${EN}`, link: "/report" },
+	{ text: "示例", link: "/zh/examples" },
+	{ text: "基准", link: "/zh/benchmarks" },
+	{ text: "报告", link: "/zh/report" },
 	{ text: "咨询与定制", link: "/zh/services" },
 ];
 
 const zhSidebar: DefaultTheme.Sidebar = {
 	"/zh/guide/": [
 		{ text: "开始", items: [{ text: "快速开始", link: "/zh/guide/getting-started" }] },
-		{ text: "参考", items: guideItems(EN) },
-		{ text: "入口", items: entryItems(EN) },
+		{ text: "参考", items: zhGuideItems },
+		{ text: "入口", items: zhEntryItems },
 	],
 };
 
