@@ -16,6 +16,8 @@ Simulacra runs populations of agents whose decisions come from language models, 
 
 ## Install
 
+<!-- #region install -->
+
 Requires [Bun](https://bun.sh) 1.3 or newer.
 
 ```bash
@@ -24,7 +26,11 @@ cd simulacra
 bun install
 ```
 
+<!-- #endregion install -->
+
 ## Three commands
+
+<!-- #region three-commands -->
 
 Run the echo-chamber example with the deterministic mock provider:
 
@@ -48,6 +54,8 @@ With a real model, set `SIMULACRA_LLM_API_KEY` and drop `--provider mock`. Any O
 
 Both examples ship with recordings made against `deepseek-v4-flash`. Pass `--llm-mode replay` to run them offline against those recordings, or `--llm-mode record` to make your own.
 
+<!-- #endregion three-commands -->
+
 ## Screenshots
 
 Run view: tick timeline with failure counts, force-directed network colored by stance, agent inspector with the causal chain from observation to effects, metric series, integrity and cost.
@@ -63,6 +71,8 @@ Runs list with a new-run form, and the offline HTML audit report.
 <p align="center"><img src="docs/screenshots/runs.jpg" alt="Runs list" width="49%"> <img src="docs/screenshots/report.jpg" alt="HTML audit report" width="49%"></p>
 
 ## What a run produces
+
+<!-- #region run-artifacts -->
 
 ```
 runs/echo/
@@ -90,6 +100,8 @@ Resume from a checkpoint. Intervention and questionnaire steps that come after t
 ```bash
 bun run simulacra resume runs/echo/checkpoints/5 --ticks 5 --out runs/echo-resumed
 ```
+
+<!-- #endregion run-artifacts -->
 
 ## Architecture
 
@@ -158,6 +170,8 @@ Two executors share the same state bus. Focal agents are component-based with de
 
 ## Examples
 
+<!-- #region examples -->
+
 Two scenarios ship in `examples/` and double as the acceptance fixtures:
 
 | scenario                   | what it models                                                                                                                                     | knobs in `params`                                                                                      | metrics                                              |
@@ -205,7 +219,11 @@ const counts = withRunLog("runs/echo", (log) => ({
 const trace = inspect("runs/echo", { agentId: someAgentId, tick: 2 });
 ```
 
+<!-- #endregion examples -->
+
 ## Extending
+
+<!-- #region extending -->
 
 ```ts
 import { defineAction, toEntityId, type Registry } from "@misakaikato/simulacra";
@@ -243,6 +261,8 @@ export const register = (registry: Registry) =>
 
 Declare the plugin in a scenario with `plugins: ["./ledger.ts"]`, or pass `--plugin` on the command line. Modules declare the columns they own, components declare what they read and write, and the kernel validates both at assembly time. `examples/prisoners_dilemma/rules.ts` is a complete example of a custom module, two actions, and a rule provider.
 
+<!-- #endregion extending -->
+
 ## Audit
 
 An audit plan names a base scenario, perturbation axes, replications, and metrics:
@@ -272,6 +292,8 @@ External simulations join through the script contract, a subprocess that takes `
 
 ## Performance
 
+<!-- #region performance -->
+
 Measured on an Apple M5 Max with Bun 1.3.11, see `bench/RESULTS.md` for the full tables.
 
 | run                                   |  agents | ticks |  wall | notes                                            |
@@ -284,6 +306,8 @@ Measured on an Apple M5 Max with Bun 1.3.11, see `bench/RESULTS.md` for the full
 `bun bench/kernel.ts` reproduces the first two rows offline. `SIMULACRA_LLM_API_KEY=... bun bench/llm.ts` reproduces the last two and refreshes the recordings, capped at 150 calls.
 
 Against other frameworks, on the same machine and the same 100,000-agent opinion model over 20 ticks: Mesa 3.5.1 finishes in 1.4 s keeping nothing per agent-tick; the simulacra cohort takes 5.8 s while materializing one observation batch and one decision batch event per tick, and 7.2 s when those 125 events are persisted to SQLite. Per LLM decision, the echo chamber prompt is about 730 tokens against roughly 3,400 in the OASIS README baseline; scenario richness differs, so read that as footprint, not fidelity. Details and reproduction commands are in `bench/RESULTS.md`.
+
+<!-- #endregion performance -->
 
 ## Development
 
@@ -326,8 +350,12 @@ Apache-2.0
 
 ## Consulting & Custom Development · 咨询与定制开发
 
+<!-- #region services -->
+
 **EN** — Available for freelance and consulting work: custom features or integrations for this project, local LLM / TTS / ASR deployment on Apple Silicon (MLX), and full-stack development in TypeScript, Python, and Rust.
 
 **中文** — 可提供咨询与定制开发：本项目的定制功能与集成、Apple Silicon 上的本地大模型 / 语音合成 / 语音识别部署（MLX），以及 TypeScript、Python、Rust 全栈开发。
 
 Contact · 联系方式：[misakaikato@outlook.com](mailto:misakaikato@outlook.com)
+
+<!-- #endregion services -->
