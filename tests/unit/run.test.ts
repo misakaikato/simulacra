@@ -15,8 +15,11 @@ import {
 	withTicksOverride,
 } from "../../src/core/run";
 import { readRunScenario } from "../../src/core/runDir";
-import type { RunResult } from "../../src/core/types";
+import type { JsonObject, RunResult } from "../../src/core/types";
 import { gatewayFactory, kernelRegistry, kernelScenario } from "../helpers/kernel";
+import { defineAction } from "../../src/core/actions";
+import type { Module } from "../../src/core/protocols";
+import { ok } from "../../src/core/result";
 import { z } from "zod";
 
 const structuredOf = (params: unknown): string | null | undefined => {
@@ -307,6 +310,164 @@ describe("runScenario", () => {
 			}
 			la.close();
 			lb.close();
+		} finally {
+			server.stop(true);
+		}
+	});
+
+	// Regression: a run that writes a bookkeeping event the replay does not (here the gateway's
+	// json_schema-to-prompt fallback notice) must still replay. `minter` reproduces the real
+	// shape of the bug: an action mints an entity id, the module surfaces it in the next
+	// observation, and so the id reaches a prompt. Entity ids must therefore not depend on how
+	// many log records happened to be written before them.
+	// 回归测试：某次运行写了回放时不存在的记账事件（这里是网关 json_schema 转 prompt 的降级通知），
+	// 它仍然必须可回放。`minter` 复现了 bug 的真实形状：动作铸造一个实体 id，模块把它放进下一次观察，
+	// 于是该 id 进入了 prompt。实体 id 因此不能依赖它之前恰好写了多少条日志记录。
+	test("a recording made through the json_schema fallback replays without misses", async () => {
+		const MINTED = "minted";
+		const mint = defineAction({
+			name: "mint",
+			description: "Mint an entity id and keep it",
+			params: z.object({}),
+			requiresModules: [MINTED],
+			fallback: false,
+			resolve: async (call, ctx) => [
+				{
+					op: "set" as const,
+					entity: "agent",
+					id: call.agentId,
+					column: MINTED,
+					value: ctx.newEntityId(),
+					cause: call.cause,
+				},
+			],
+		});
+		const minterModule = (): Module => ({
+			name: MINTED,
+			concurrencySafe: true,
+			declare: (world) =>
+				world.declare({
+					entity: "agent",
+					name: MINTED,
+					dtype: "str",
+					default: "",
+					owner: MINTED,
+					merge: "last",
+				}),
+			actions: () => [],
+			// The minted id is surfaced as a feed item, the one observation shape a component
+			// renders, so it really lands in the next tick's prompt.
+			// 铸造出的 id 以 feed 条目的形式呈现——那是组件真正会渲染的观察形状——于是它确实进入
+			// 下一 tick 的 prompt。
+			observe: (view, ids) => {
+				const out: Record<string, JsonObject> = {};
+				for (const id of ids)
+					out[id] = {
+						feed: [
+							{ id: String(view.row("agent", id)?.[MINTED] ?? "none"), text: "x" },
+						],
+					};
+				return out;
+			},
+			step: async () => [],
+			getState: () => ({}),
+			setState: () => {},
+		});
+
+		let schemaRequests = 0;
+		const server = Bun.serve({
+			port: 0,
+			hostname: "127.0.0.1",
+			fetch: async (req) => {
+				const body = (await req.json()) as JsonObject;
+				if (body.response_format !== undefined) {
+					schemaRequests += 1;
+					return Response.json({ error: "response_format unsupported" }, { status: 400 });
+				}
+				return Response.json({
+					model: "fake",
+					choices: [{ message: { content: '{"action": "mint", "args": {}}' } }],
+					usage: { prompt_tokens: 50, completion_tokens: 12 },
+				});
+			},
+		});
+		try {
+			const recordDir = tempDir();
+			const registryFor = () => {
+				const fixture = kernelRegistry();
+				const a = fixture.registry.actions.register(mint);
+				if (!a.ok) throw new Error(JSON.stringify(a.error));
+				fixture.registry.modules.register(MINTED, () => ok(minterModule()));
+				return fixture.registry;
+			};
+			const scenarioFor = (mode: "record" | "replay") =>
+				kernelScenario({
+					population: { n: 2 },
+					modules: [{ kind: MINTED }],
+					instruments: [],
+					providers: { main: { kind: "llm" } },
+					llm: {
+						baseUrl: `http://127.0.0.1:${server.port}/v1`,
+						model: "fake",
+						mode,
+						recordDir,
+					},
+					steps: [{ kind: "run", ticks: 2 }],
+				});
+			const opts = { createGateway: gatewayFactory };
+			const recordOut = tempDir();
+			const recorded = await runScenario(
+				scenarioFor("record"),
+				registryFor(),
+				recordOut,
+				opts,
+			);
+			expect(recorded.ok && recorded.value.status).toBe("succeeded");
+			// The fallback fired and left bookkeeping failure events behind; how many json_schema
+			// attempts race before the gateway flips is a batching detail.
+			// 降级发生过并留下了记账用的失败事件；网关切换前有几个 json_schema 请求撞上去是批处理细节。
+			expect(schemaRequests).toBeGreaterThan(0);
+			expect(recorded.ok ? recorded.value.integrity.llmFailures : 0).toBeGreaterThan(0);
+
+			const replayOut = tempDir();
+			const replayed = await runScenario(
+				scenarioFor("replay"),
+				registryFor(),
+				replayOut,
+				opts,
+			);
+			expect(replayed.ok && replayed.value.status).toBe("succeeded");
+			expect(replayed.ok && replayed.value.integrity).toMatchObject({
+				activated: 4,
+				ok: 4,
+				llmCalls: 0,
+				llmFailures: 0,
+			});
+			// The invariant itself: the ids minted while resolving actions are the same on both
+			// sides, even though only the recording run wrote the fallback's failure event.
+			// 不变量本身：解析动作时铸造出的 id 两边一致，尽管只有录制那次写了降级的失败事件。
+			const mintedIn = (dir: string): readonly string[] => {
+				const log = openSqliteEventLog(eventLogPath(dir));
+				try {
+					return log
+						.query({ kind: ["effect"] })
+						.flatMap((e) =>
+							e.kind === "effect"
+								? e.payload.effects.flatMap((x) =>
+										x.op === "set" && x.column === MINTED
+											? [String(x.value)]
+											: [],
+									)
+								: [],
+						)
+						.sort();
+				} finally {
+					log.close();
+				}
+			};
+			const mintedRecord = mintedIn(recordOut);
+			expect(mintedRecord.length).toBeGreaterThan(0);
+			expect(mintedIn(replayOut)).toEqual(mintedRecord);
 		} finally {
 			server.stop(true);
 		}

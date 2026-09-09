@@ -12,14 +12,20 @@ import { err, ok } from "./core/result";
 import { parseScenarioYaml } from "./core/scenario";
 import type { Result } from "./core/types";
 import { EXAMPLES_DIR, examplePath, listExamples } from "./examples";
+import { deepseek } from "./llm/presets";
 import { probeEndpoint, type ProbeCheck } from "./llm/probe";
 import { readFileSync } from "node:fs";
 
 export const API_KEY_ENV = "SIMULACRA_LLM_API_KEY";
 export const BASE_URL_ENV = "SIMULACRA_LLM_BASE_URL";
 export const MODEL_ENV = "SIMULACRA_LLM_MODEL";
-export const DEFAULT_BASE_URL = "https://api.deepseek.com/v1";
-export const DEFAULT_MODEL = "deepseek-v4-flash";
+// The defaults are the DeepSeek preset itself rather than copies of its literals, so the probe
+// inherits its `extra` (reasoning disabled) and cannot drift away from the preset it documents.
+// 默认值直接取自 DeepSeek 预设而不是抄一份它的字面量，探测因此继承预设的 extra（关闭推理），
+// 也不会与它所记录的那个预设产生偏离。
+const DEEPSEEK = deepseek();
+export const DEFAULT_BASE_URL = DEEPSEEK.baseUrl;
+export const DEFAULT_MODEL = DEEPSEEK.model;
 const MIN_BUN = [1, 3] as const;
 
 export type DoctorCheck = ProbeCheck;
@@ -88,10 +94,16 @@ export const doctor = async (
 	const env = opts.env ?? process.env;
 	const apiKey = env[API_KEY_ENV] ?? "";
 	if (apiKey.length === 0) return err(`${API_KEY_ENV} is not set`);
+	const baseUrl = opts.baseUrl ?? env[BASE_URL_ENV] ?? DEFAULT_BASE_URL;
 	const probed = await probeEndpoint({
-		baseUrl: opts.baseUrl ?? env[BASE_URL_ENV] ?? DEFAULT_BASE_URL,
+		baseUrl,
 		model: opts.model ?? env[MODEL_ENV] ?? DEFAULT_MODEL,
 		apiKey,
+		// Only the preset's own endpoint gets the preset's extra; a custom base URL may reject it.
+		// 只有预设自己的端点才带上预设的 extra；自定义 base URL 可能不认这些字段。
+		...(baseUrl === DEFAULT_BASE_URL && DEEPSEEK.extra !== undefined
+			? { extra: DEEPSEEK.extra }
+			: {}),
 	});
 	return ok([...checks, ...probed.checks]);
 };
