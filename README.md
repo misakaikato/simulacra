@@ -14,6 +14,53 @@ Simulacra runs populations of agents whose decisions come from language models, 
 - **Audit harness.** TRAILS-style perturbation axes across design and representation, replications with seed lineage, Mann–Whitney U, Holm correction, Cohen's d, bootstrap intervals, total variation distance, Wasserstein-1, Cliff's delta, and an evidence grade for the claim.
 - **Four entry points.** CLI, HTTP API, MCP server, and a browser GUI, all over one public API.
 
+## Give this to your agent
+
+Paste the block below into Claude Code, Codex, Cursor or any coding agent. It installs simulacra, proves the install with an offline run and an audit, and points at the files worth reading before it writes a line.
+
+```text
+Set up and use simulacra: a typed, event-sourced kernel for LLM-driven social simulation
+with a built-in robustness-audit harness (Bun + TypeScript).
+Docs: https://misakaikato.github.io/simulacra/  Repo: https://github.com/misakaikato/simulacra
+
+1. Install. Needs Bun 1.3 or newer. To run the examples, the CLI and the GUI:
+     git clone https://github.com/misakaikato/simulacra.git && cd simulacra && bun install
+   To use it from a project I already have instead:
+     bun add @misakaikato/simulacra
+   The package ships the same binary: "bunx simulacra examples" lists the built-in examples
+   and "bunx simulacra examples echo_chamber" copies one into the working directory.
+
+2. Prove it works offline, no API key needed:
+     bun run simulacra run examples/echo_chamber/scenario.yaml --seed 7 --provider mock --out runs/echo
+     bun run simulacra audit examples/prisoners_dilemma/audit.yaml --replications 5 --provider mock --out audits/pd
+   Then read runs/echo/result.json: metrics, integrity counts, cost.
+
+3. Read before writing anything: README.md; the examples' scenario.yaml and audit.yaml;
+   examples/prisoners_dilemma/rules.ts, a complete plugin with a module, two actions and a
+   rule provider; examples/programmatic/01-run-and-inspect.ts. src/index.ts is the whole
+   public API, nothing outside it is API.
+
+4. Build what I asked for. Start from the nearest example scenario, keep --provider mock
+   until the mechanics are right, and put every custom action, module, provider, policy or
+   metric in one plugin file that exports register(registry), declared as plugins: ["./x.ts"]
+   in the scenario or passed with --plugin.
+
+5. Real models. Any OpenAI-compatible endpoint through SIMULACRA_LLM_API_KEY, optionally
+   SIMULACRA_LLM_BASE_URL and SIMULACRA_LLM_MODEL; run "bun run simulacra doctor --llm" first.
+   --llm-mode record records the calls, --llm-mode replay replays them byte for byte, free and
+   deterministic, at the same scenario size they were recorded at.
+
+6. Rules while you work. Failure is data: report the integrity counts (parse failures,
+   rejected actions, budget exhaustion) instead of smoothing them over, and never add a silent
+   fallback. The same scenario and seed must produce the same digest, check it with
+   "bun run simulacra replay runs/echo --to-tick 10". Every number you report to me comes from
+   result.json, the event log ("simulacra inspect", or SQL over events.sqlite) or an audit
+   report, never from an estimate.
+
+7. Finish by telling me the exact commands you ran and where the run and audit directories
+   are. "bun run simulacra serve --data ." opens the GUI over them.
+```
+
 ## Install
 
 <!-- #region install -->
