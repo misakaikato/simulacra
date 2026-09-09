@@ -351,9 +351,21 @@ Apache-2.0
 
 <!-- #region services -->
 
-**EN** — Available for freelance and consulting work: custom features or integrations for this project, local LLM / TTS / ASR deployment on Apple Silicon (MLX), and full-stack development in TypeScript, Python, and Rust.
+Work on simulacra itself, by its author.
 
-**中文** — 可提供咨询与定制开发：本项目的定制功能与集成、Apple Silicon 上的本地大模型 / 语音合成 / 语音识别部署（MLX），以及 TypeScript、Python、Rust 全栈开发。
+**EN**
+
+- **Scenarios and plugins** — world modules, actions, metrics and decision providers built for a specific research question. The prisoner's dilemma and referendum examples are the templates: a module with its own columns, actions that resolve into effects, a metric that reads the event log.
+- **Bringing an existing simulation under audit** — the script contract and the OASIS importer take simulations that were not built here and put their conclusions through the same perturbation axes, replications and evidence grading.
+- **Audit design and interpretation** — choosing axes that actually address the claim, sizing replications for the grade you need, and reading effect sizes, direction consistency and the distribution tests.
+- **Endpoints and scale** — private or local model endpoints, recording and replay for reruns that cost nothing, and cohort tuning for populations in the hundred thousands.
+
+**中文**
+
+- **场景与插件** — 针对具体研究问题编写世界模块、动作、指标与决策提供者。囚徒困境与公投两个示例就是模板：模块声明自己的列，动作解析成效果，指标从事件日志读回。
+- **把已有模拟纳入审计** — 用脚本契约与 OASIS 导入器接入并非在此构建的模拟，让它们的结论走同一套扰动轴、复制与证据分级。
+- **审计设计与结果解读** — 选择真正针对该论断的扰动轴，按所需证据等级确定复制次数，解读效应量、方向一致率与分布检验。
+- **端点与规模** — 私有或本地模型端点、可零成本重跑的录制与回放，以及面向十万量级人口的 cohort 调优。
 
 Contact · 联系方式：[misakaikato@outlook.com](mailto:misakaikato@outlook.com)
 
