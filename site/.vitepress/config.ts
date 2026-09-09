@@ -28,8 +28,15 @@ const normalizeBase = (value: string): string => {
 	return trimmed.length === 0 ? "/" : `/${trimmed}/`;
 };
 
-const base = normalizeBase(process.env.SITE_BASE ?? DEFAULT_BASE);
-const origin = (process.env.SITE_ORIGIN ?? DEFAULT_ORIGIN).replace(/\/+$/, "");
+// An unset or empty variable (a CI variable that was never defined) means the default.
+// 未设置或为空的变量（CI 里从未定义的变量）表示默认值。
+const envOr = (name: string, fallback: string): string => {
+	const value = process.env[name];
+	return value === undefined || value.length === 0 ? fallback : value;
+};
+
+const base = normalizeBase(envOr("SITE_BASE", DEFAULT_BASE));
+const origin = envOr("SITE_ORIGIN", DEFAULT_ORIGIN).replace(/\/+$/, "");
 
 const guideItems = (suffix = ""): DefaultTheme.SidebarItem[] => [
 	{ text: `Scenarios${suffix}`, link: "/guide/scenarios" },

@@ -3,32 +3,32 @@ layout: home
 title: simulacra
 titleTemplate: LLM social simulation with a robustness-audit harness
 hero:
-  name: simulacra
-  text: A typed, event-sourced kernel for LLM-driven social simulation, with a robustness-audit harness built in.
-  tagline: Every observation, decision and state change is a typed event. The harness then asks the question most simulation papers skip. Does the conclusion survive perturbation?
-  image:
-    src: /banner.jpg
-    alt: simulacra
-  actions:
-    - theme: brand
-      text: Get started
-      link: /guide/getting-started
-    - theme: alt
-      text: GitHub
-      link: https://github.com/misakaikato/simulacra
+    name: simulacra
+    text: A typed, event-sourced kernel for LLM-driven social simulation, with a robustness-audit harness built in.
+    tagline: Every observation, decision and state change is a typed event. The harness then asks the question most simulation papers skip. Does the conclusion survive perturbation?
+    image:
+        src: /banner.jpg
+        alt: simulacra
+    actions:
+        - theme: brand
+          text: Get started
+          link: /guide/getting-started
+        - theme: alt
+          text: GitHub
+          link: https://github.com/misakaikato/simulacra
 features:
-  - title: Typed world state
-    details: Columnar tables are the single source of truth. Agents, modules, and providers read views and emit effects; one resolver applies them.
-  - title: Event sourcing
-    details: Every observation, decision, LLM call, effect, and failure is an append-only event carrying its seed path. Replay is a fold. Same scenario, same seed, same digest.
-  - title: Recorded LLM calls
-    details: Real model outputs are recorded and replayed byte for byte, so audits re-analyze without re-spending tokens.
-  - title: Failure is data
-    details: Parse failures, rejected actions, truncated outputs, budget exhaustion, and circuit breaks are events with counts in every result, never silent fallbacks.
-  - title: Batch decision providers
-    details: Mix LLM, rule, mock, surrogate, archetype, and cache providers in one population; route through TopoSim-style cells or APS-style adaptive prototypes; every provider's own audit numbers land in the metrics.
-  - title: Audit harness
-    details: TRAILS-style perturbation axes across design and representation, replications with seed lineage, Mann–Whitney U, Holm correction, Cohen's d, bootstrap intervals, total variation distance, Wasserstein-1, Cliff's delta, and an evidence grade for the claim.
+    - title: Typed world state
+      details: Columnar tables are the single source of truth. Agents, modules, and providers read views and emit effects; one resolver applies them.
+    - title: Event sourcing
+      details: Every observation, decision, LLM call, effect, and failure is an append-only event carrying its seed path. Replay is a fold. Same scenario, same seed, same digest.
+    - title: Recorded LLM calls
+      details: Real model outputs are recorded and replayed byte for byte, so audits re-analyze without re-spending tokens.
+    - title: Failure is data
+      details: Parse failures, rejected actions, truncated outputs, budget exhaustion, and circuit breaks are events with counts in every result, never silent fallbacks.
+    - title: Batch decision providers
+      details: Mix LLM, rule, mock, surrogate, archetype, and cache providers in one population; route through TopoSim-style cells or APS-style adaptive prototypes; every provider's own audit numbers land in the metrics.
+    - title: Audit harness
+      details: TRAILS-style perturbation axes across design and representation, replications with seed lineage, Mann–Whitney U, Holm correction, Cohen's d, bootstrap intervals, total variation distance, Wasserstein-1, Cliff's delta, and an evidence grade for the claim.
 ---
 
 ## Three commands

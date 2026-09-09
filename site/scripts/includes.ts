@@ -10,6 +10,10 @@ import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
 
 const INCLUDE = /<!--\s*@include:\s*(.*?)\s*-->/g;
+// `<<< path{lines}[lang]`: VitePress prints a placeholder into the page when the file is missing
+// `<<< path{lines}[lang]`：文件缺失时 VitePress 只在页面里打印一段占位文字
+const SNIPPET = /^<<<\s+(\S+)\s*$/gm;
+const SNIPPET_META = /(\{[^}]*\}|\[[^\]]*\])+$/;
 const RANGE = /\{(\d*),(\d*)\}$/;
 const REGION = /#([\w-]+)$/;
 const MARKER = /^<!-- #?((?:end)?region) ([\w*-]+) -->$/;
@@ -45,6 +49,13 @@ const hasRegion = (text: string, name: string): boolean => {
 	return false;
 };
 
+// `@/` is the site root, anything else is relative to the markdown file (VitePress rule)
+// `@/` 表示站点根目录，其余相对于该 markdown 文件（VitePress 的规则）
+const resolveTarget = (siteDir: string, file: string, spec: string): string =>
+	spec.startsWith("@")
+		? resolve(siteDir, spec.slice(spec.startsWith("@/") ? 2 : 1))
+		: resolve(dirname(file), spec);
+
 export const verifyIncludes = (siteDir: string): readonly IncludeIssue[] => {
 	const issues: IncludeIssue[] = [];
 	for (const file of markdownFiles(siteDir)) {
@@ -61,17 +72,23 @@ export const verifyIncludes = (siteDir: string): readonly IncludeIssue[] => {
 				report("empty include path");
 				continue;
 			}
-			// `@/` is the site root, anything else is relative to the markdown file (VitePress rule)
-			// `@/` 表示站点根目录，其余相对于该 markdown 文件（VitePress 的规则）
-			const target = spec.startsWith("@")
-				? resolve(siteDir, spec.slice(spec.startsWith("@/") ? 2 : 1))
-				: resolve(dirname(file), spec);
+			const target = resolveTarget(siteDir, file, spec);
 			if (!existsSync(target)) {
 				report(`included file not found: ${target}`);
 				continue;
 			}
 			if (region !== undefined && !hasRegion(readFileSync(target, "utf8"), region))
 				report(`region '${region}' not found in ${target}`);
+		}
+		for (const match of text.matchAll(SNIPPET)) {
+			const spec = (match[1] ?? "").replace(SNIPPET_META, "").replace(REGION, "");
+			const target = resolveTarget(siteDir, file, spec);
+			if (!existsSync(target))
+				issues.push({
+					file: relative(siteDir, file),
+					directive: match[0],
+					message: `snippet file not found: ${target}`,
+				});
 		}
 	}
 	return issues;
