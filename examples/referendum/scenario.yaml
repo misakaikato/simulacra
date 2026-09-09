@@ -1,0 +1,109 @@
+scenarioId: referendum
+seed: 11
+plugins: ["./ballot.ts"]
+params:
+    homophily: medium
+    activation: 0.4
+    feedSize: 5
+    memoryWindow: 3
+population:
+    n: 200
+    source: { kind: csv, path: ./voters.csv }
+    provenance: survey
+    fields:
+        - { name: name, dtype: str, sampling: { kind: value, value: anon } }
+        - { name: age, dtype: i32, sampling: { kind: range, min: 18, max: 80 } }
+        - name: region
+          dtype: str
+          sampling: { kind: choice, choices: [north, south, east, west, centre] }
+        - { name: stance, dtype: f64, sampling: { kind: range, min: -2, max: 2 } }
+modules:
+    - kind: socialGraph
+      options:
+          generator: powerlaw
+          meanDegree: 8
+          exponent: 2.4
+          stanceColumn: persona.stance
+          homophilyBand:
+              $param: homophily
+              map:
+                  low: [0.02, 0.10]
+                  medium: [0.12, 0.20]
+                  high: [0.22, 0.30]
+          hubAssignment: mixed
+          hubCount: 20
+    - kind: feed
+      options:
+          size: { $param: feedSize }
+          recommender: followingFirst
+executors:
+    - kind: focal
+      name: voters
+      options:
+          provider: main
+          components:
+              - kind: persona
+              - kind: instructions
+                options:
+                    text: >-
+                        Your town votes next month on a proposal to fund a new transit line from a
+                        local levy. Your stance runs from -2 (strongly against) to 2 (strongly in
+                        favour). Each round you see a few posts from neighbours; you may post,
+                        reply, repost, like, follow or unfollow someone, or stay silent. Act as
+                        your profile would.
+              - kind: recentMemory
+                options: { k: { $param: memoryWindow } }
+              - kind: feedObservation
+                options: { size: { $param: feedSize } }
+providers:
+    main:
+        kind: llm
+policy:
+    kind: bernoulli
+    options:
+        p: { $param: activation }
+instruments:
+    - kind: questionnaire
+      name: ballot
+      options:
+          entersMemory: false
+          questions:
+              - id: vote
+                prompt: If the vote were held today, how would you vote on the transit levy?
+                responseType: choice
+                choices: [support, oppose, abstain]
+    - { kind: supportShare, name: supportShare, every: 1 }
+    - { kind: stanceAssortativity, options: { stanceColumn: persona.stance }, every: 1 }
+steps:
+    - { kind: run, ticks: 3 }
+    - kind: intervene
+      arm: control
+      instruction: >-
+          For the next few rounds, say publicly how you intend to vote on the transit levy and why.
+    - { kind: run, ticks: 2 }
+    - { kind: questionnaire, name: ballot }
+    # Instruments only fire inside run steps, so one more tick is what carries the ballot into
+    # result.metrics. Keep it last; the audit axis addresses the intervene step as steps.1.arm.
+    # 仪器只在 run 步骤内采集，因此还需一个 tick 才能把选票带进 result.metrics。它必须留在最后；
+    # 审计轴用 steps.1.arm 定位上面的 intervene 步骤。
+    - { kind: run, ticks: 1 }
+hypothesis:
+    id: endorsement_targeting
+    claim: >-
+        Asking committed supporters to advocate raises the final support share more than asking
+        the same number of voters drawn at random.
+    claimType: policy
+    arms:
+        - name: control
+          role: control
+          selection: { where: {}, n: 20 }
+        - name: endorsement
+          role: treatment
+          selection: { where: { persona.stance: { gt: 1 } }, n: 20 }
+    outcomes:
+        - { name: support, metric: supportShare, direction: increase }
+llm:
+    mode: live
+    recordDir: ./recordings
+    budget: { maxCalls: 600, maxCompletionTokens: 512 }
+    extra: { thinking: { type: disabled } }

@@ -35,14 +35,29 @@ export const resolveScenarioPlugins = (scenario: Scenario, baseDir: string): Sce
 		? scenario
 		: { ...scenario, plugins: scenario.plugins.map((p) => resolve(baseDir, p)) };
 
-// Every path a scenario file declares relative to itself: plugins and the LLM recording directory
-// 场景文件相对自身声明的全部路径：插件与 LLM 录制目录
+// Every path a scenario file declares relative to itself: plugins, the population source and
+// the LLM recording directory
+// 场景文件相对自身声明的全部路径：插件、人口数据源与 LLM 录制目录
 export const resolveScenarioPaths = (scenario: Scenario, baseDir: string): Scenario => {
 	const withPlugins = resolveScenarioPlugins(scenario, baseDir);
+	const source = withPlugins.population.source;
+	const withPopulation =
+		source.kind === "synthetic"
+			? withPlugins
+			: {
+					...withPlugins,
+					population: {
+						...withPlugins.population,
+						source: { ...source, path: resolve(baseDir, source.path) },
+					},
+				};
 	const recordDir = scenario.llm.recordDir;
 	return recordDir === undefined
-		? withPlugins
-		: { ...withPlugins, llm: { ...withPlugins.llm, recordDir: resolve(baseDir, recordDir) } };
+		? withPopulation
+		: {
+				...withPopulation,
+				llm: { ...withPopulation.llm, recordDir: resolve(baseDir, recordDir) },
+			};
 };
 
 // Replication i appends i to the seed path and leaves the seed alone, so replications differ

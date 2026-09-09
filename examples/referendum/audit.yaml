@@ -1,0 +1,36 @@
+baseScenario: ./scenario.yaml
+design: one_at_a_time
+replications: 30
+claimType: policy
+metrics: [supportShare, stanceAssortativity]
+axes:
+    - id: arm
+      level: macro
+      kind: design
+      dimension: intervention target
+      target: steps.1.arm
+      levels: [control, endorsement]
+    - id: personaFormat
+      level: micro
+      kind: representation
+      dimension: representational_format
+      target: prompt.personaFormat
+      levels: [plain, bullets, table]
+    - id: memoryRepresentation
+      level: micro
+      kind: representation
+      dimension: memory and temporality
+      target: prompt.memoryRepresentation
+      levels: [transcript, json, bullets]
+    - id: homophily
+      level: meso
+      kind: design
+      dimension: environment structure
+      target: params.homophily
+      levels: [low, medium, high]
+    - id: activation
+      level: meso
+      kind: design
+      dimension: interaction protocol
+      target: params.activation
+      levels: [0.2, 0.4, 0.6]

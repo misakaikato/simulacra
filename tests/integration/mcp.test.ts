@@ -89,6 +89,7 @@ describe("MCP server", () => {
 		expect(examples.json).toMatchObject([
 			{ name: "echo_chamber" },
 			{ name: "prisoners_dilemma" },
+			{ name: "referendum" },
 		]);
 
 		const run = await call(client, "run_scenario", {

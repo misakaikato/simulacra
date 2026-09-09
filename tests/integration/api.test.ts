@@ -163,7 +163,11 @@ describe("HTTP API", () => {
 		const examples = await app.request("/api/examples");
 		expect(examples.status).toBe(200);
 		const list = (await examples.json()) as readonly Example[];
-		expect(list.map((e) => e.name)).toEqual(["echo_chamber", "prisoners_dilemma"]);
+		expect(list.map((e) => e.name)).toEqual([
+			"echo_chamber",
+			"prisoners_dilemma",
+			"referendum",
+		]);
 		expect(list[0]?.yaml).toContain("scenarioId: echo_chamber");
 		expect(await (await app.request("/api/runs")).json()).toEqual([]);
 		expect(await (await app.request("/api/audits")).json()).toEqual([]);
