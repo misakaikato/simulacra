@@ -1,0 +1,49 @@
+# Builds the static site on every push to main and uploads it as a Pages artifact. The deploy
+# job runs only when the repository variable SITE_DEPLOY is "true", so enabling GitHub Pages is
+# a separate decision; until then the workflow only proves the build.
+# 每次推送到 main 都构建静态站并上传为 Pages 产物。deploy job 只在仓库变量 SITE_DEPLOY 为 "true"
+# 时运行，启用 GitHub Pages 因此是单独的决定；在那之前工作流只验证构建。
+
+name: site
+
+on:
+    push:
+        branches: [main]
+    workflow_dispatch:
+
+permissions:
+    contents: read
+    pages: write
+    id-token: write
+
+concurrency:
+    group: pages
+    cancel-in-progress: false
+
+jobs:
+    build:
+        runs-on: ubuntu-latest
+        env:
+            SITE_BASE: ${{ vars.SITE_BASE }}
+            SITE_ORIGIN: ${{ vars.SITE_ORIGIN }}
+        steps:
+            - uses: actions/checkout@v4
+            - uses: oven-sh/setup-bun@v2
+              with:
+                  bun-version: latest
+            - run: bun install --frozen-lockfile
+            - run: bun run build:site
+            - uses: actions/upload-pages-artifact@v3
+              with:
+                  path: site/.vitepress/dist
+
+    deploy:
+        if: ${{ vars.SITE_DEPLOY == 'true' }}
+        needs: build
+        runs-on: ubuntu-latest
+        environment:
+            name: github-pages
+            url: ${{ steps.deployment.outputs.page_url }}
+        steps:
+            - id: deployment
+              uses: actions/deploy-pages@v4

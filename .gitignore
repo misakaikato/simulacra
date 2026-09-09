@@ -15,3 +15,6 @@ site/public/banner.jpg
 site/public/screenshots/
 specs/
 decisions/
+runs/
+audits/
+.claude/launch.json
