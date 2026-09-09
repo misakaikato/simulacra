@@ -73,7 +73,15 @@ instruments:
                 responseType: choice
                 choices: [support, oppose, abstain]
     - { kind: supportShare, name: supportShare, every: 1 }
-    - { kind: stanceAssortativity, options: { stanceColumn: persona.stance }, every: 1 }
+    # `actions` defaults to repost and reply; a model-driven population here endorses mostly by
+    # liking, and without like in the list there are no interaction edges left to measure.
+    # actions 默认是 repost 与 reply；这里由模型驱动的人群主要靠点赞表态，列表里不含 like 就没有
+    # 互动边可测。
+    - kind: stanceAssortativity
+      options:
+          stanceColumn: persona.stance
+          actions: [repost, reply, like]
+      every: 1
 steps:
     - { kind: run, ticks: 3 }
     - kind: intervene
@@ -105,5 +113,5 @@ hypothesis:
 llm:
     mode: live
     recordDir: ./recordings
-    budget: { maxCalls: 600, maxCompletionTokens: 512 }
+    budget: { maxCalls: 800, maxCompletionTokens: 512 }
     extra: { thinking: { type: disabled } }
