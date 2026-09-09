@@ -52,7 +52,7 @@ bun run simulacra serve --data .
 
 With a real model, set `SIMULACRA_LLM_API_KEY` and drop `--provider mock`. Any OpenAI-compatible endpoint works. DeepSeek is the default, with thinking disabled in the preset so structured answers fit small token budgets; `mlx-lm` and LM Studio presets are one flag away. Run `bun run simulacra doctor --llm` first to check structured-output support, concurrency, and cached-token reporting.
 
-Both examples ship with recordings made against `deepseek-v4-flash`. Pass `--llm-mode replay` to run them offline against those recordings, or `--llm-mode record` to make your own.
+The prisoner's dilemma and echo chamber ship with recordings made against `deepseek-v4-flash` at the benchmark's size, so replaying them offline means matching that size: `--llm-mode replay --ticks 5` for the prisoner's dilemma, and `--ticks 3` with `population.n` 20 for the echo chamber (`bun bench/llm.ts` runs both). A prompt the recordings do not cover is a replay miss, reported as a failure rather than a silent live call. Use `--llm-mode record` to make your own at any size.
 
 <!-- #endregion three-commands -->
 
