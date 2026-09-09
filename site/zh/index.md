@@ -33,9 +33,27 @@ features:
 
 ## 三条命令
 
-以下片段取自 README，原文为英文。
+用确定性的 mock 提供者运行回音室示例：
 
-<!--@include: ../../README.md#three-commands-->
+```bash
+bun run simulacra run examples/echo_chamber/scenario.yaml --seed 7 --provider mock --out runs/echo
+```
+
+在人格格式、措辞框架与记忆表示三个方向上审计囚徒困境示例：
+
+```bash
+bun run simulacra audit examples/prisoners_dilemma/audit.yaml --replications 5 --provider mock --out audits/pd
+```
+
+打开 GUI 查看刚刚产出的运行与审计：
+
+```bash
+bun run simulacra serve --data .
+```
+
+换成真实模型：设好 `SIMULACRA_LLM_API_KEY`，去掉 `--provider mock`。任何 OpenAI 兼容端点都可以。默认是 DeepSeek，预设里关掉了思考，好让结构化回答装进不大的 token 预算；`mlx-lm` 与 LM Studio 的预设也只差一个参数。先跑一次 `bun run simulacra doctor --llm`，确认端点支持结构化输出、并发与缓存 token 上报。
+
+两个示例都自带对 `deepseek-v4-flash` 的录制。加 `--llm-mode replay` 可以离线对着这些录制跑，加 `--llm-mode record` 则录制自己的。
 
 ## 数字
 
@@ -46,7 +64,7 @@ features:
 <div><strong>3 + 5</strong><span>个示例场景与程序化示例</span></div>
 </div>
 
-耗时来自[基准](/benchmarks)（English），在 Apple M5 Max 与 Bun 1.3.11 上测得。
+耗时来自[基准](/zh/benchmarks)，在 Apple M5 Max 与 Bun 1.3.11 上测得。
 
 ## 在浏览器里
 
@@ -69,5 +87,5 @@ features:
 ## 接下来
 
 - [快速开始](/zh/guide/getting-started)：安装与三条命令。
-- [场景参考](/guide/scenarios)与[审计参考](/guide/audits)（English）：两份 YAML 文档的每个字段。
-- [活报告](/report)（English）：本站构建时真实跑出的审计报告。
+- [场景参考](/zh/guide/scenarios)与[审计参考](/zh/guide/audits)：两份 YAML 文档的每个字段。
+- [活报告](/zh/report)：本站构建时真实跑出的审计报告。
