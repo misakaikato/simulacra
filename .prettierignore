@@ -7,3 +7,6 @@ specs/
 decisions/
 .claude/worktrees/
 bench/RESULTS.md
+site/.vitepress/dist/
+site/.vitepress/cache/
+site/public/

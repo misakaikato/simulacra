@@ -1,0 +1,9 @@
+{
+	"extends": "../tsconfig.json",
+	"include": [
+		".vitepress/config.ts",
+		".vitepress/theme/index.ts",
+		".vitepress/theme/env.d.ts",
+		"scripts"
+	]
+}

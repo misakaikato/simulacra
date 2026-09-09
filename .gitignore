@@ -8,3 +8,8 @@ simulacra-data/
 .env*
 .DS_Store
 .claude/worktrees/
+site/.vitepress/dist/
+site/.vitepress/cache/
+site/public/demo/
+site/public/banner.jpg
+site/public/screenshots/

@@ -1,0 +1,159 @@
+/*
+ * Brand and neutral colours shared with the GUI (gui/src/styles.css) and the audit report
+ * (src/harness/report.ts): teal accent, cool grey surfaces, monospace for commands and numbers.
+ * 与 GUI（gui/src/styles.css）和审计报告（src/harness/report.ts）共用的品牌色与中性色：
+ * 青色强调、冷灰表面，命令与数字用等宽字体。
+ */
+
+:root {
+	--vp-c-brand-1: #1f6f78;
+	--vp-c-brand-2: #195f67;
+	--vp-c-brand-3: #1f6f78;
+	--vp-c-brand-soft: rgba(31, 111, 120, 0.14);
+
+	--vp-c-bg: #f5f6f8;
+	--vp-c-bg-alt: #eef0f3;
+	--vp-c-bg-elv: #ffffff;
+	--vp-c-bg-soft: #eef0f3;
+	--vp-c-text-1: #1b1f24;
+	--vp-c-text-2: #5c6672;
+	--vp-c-text-3: #7b8592;
+	--vp-c-divider: #d5dae0;
+	--vp-c-border: #c9d0d8;
+	--vp-c-gutter: #d5dae0;
+
+	--vp-font-family-mono: ui-monospace, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+
+	--vp-home-hero-name-color: var(--vp-c-brand-1);
+	--vp-home-hero-name-background: transparent;
+	--vp-home-hero-image-background-image: none;
+	--vp-home-hero-image-filter: none;
+}
+
+.dark {
+	--vp-c-brand-1: #5fb8c0;
+	--vp-c-brand-2: #4ea7af;
+	--vp-c-brand-3: #3f8f96;
+	--vp-c-brand-soft: rgba(95, 184, 192, 0.16);
+
+	--vp-c-bg: #15181c;
+	--vp-c-bg-alt: #101316;
+	--vp-c-bg-elv: #1d2126;
+	--vp-c-bg-soft: #1d2126;
+	--vp-c-text-1: #e4e7ea;
+	--vp-c-text-2: #98a2ad;
+	--vp-c-text-3: #6f7a86;
+	--vp-c-divider: #303640;
+	--vp-c-border: #3a414b;
+	--vp-c-gutter: #101316;
+}
+
+/* Reading width of guide pages; the landing page keeps the full width for screenshots. */
+/* 指南页的阅读宽度；首页保留全宽以放截图。 */
+html .VPDoc .content-container,
+html .VPDoc.has-aside .content-container {
+	max-width: 72ch;
+}
+
+/* Tables carry commands, fields and numbers, so they share the code font. */
+/* 表格里是命令、字段与数字，与代码共用字体。 */
+.vp-doc table {
+	font-family: var(--vp-font-family-mono);
+	font-variant-numeric: tabular-nums;
+}
+
+.vp-doc th,
+.vp-doc td {
+	font-size: 13px;
+}
+
+/* The hero banner is 3:1, so it sits full width under the title instead of in a side column. */
+/* hero 横幅是 3:1，因此放在标题下方通栏，而不是侧边一栏。 */
+.VPHero.has-image .container {
+	flex-direction: column;
+	text-align: left;
+}
+
+.VPHero.has-image .main {
+	order: 1;
+	width: 100%;
+	max-width: 100%;
+}
+
+.VPHero.has-image .actions {
+	justify-content: flex-start;
+}
+
+.VPHero.has-image .image {
+	order: 2;
+	flex-grow: 0;
+	margin: 32px 0 0;
+	min-height: 0;
+}
+
+.VPHero.has-image .image-container {
+	display: block;
+	width: 100%;
+	height: auto;
+	transform: none;
+}
+
+.VPHero.has-image .image-bg {
+	display: none;
+}
+
+.VPHero.has-image .image-src {
+	position: static;
+	display: block;
+	width: 100%;
+	max-width: 100%;
+	max-height: none;
+	transform: none;
+	border-radius: 8px;
+}
+
+/* Figures on the landing page and the numbers row. */
+/* 首页的数字行与截图。 */
+.stats {
+	display: grid;
+	grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+	gap: 16px;
+	margin: 24px 0;
+}
+
+.stats > div {
+	padding: 16px 20px;
+	border: 1px solid var(--vp-c-divider);
+	border-radius: 8px;
+	background: var(--vp-c-bg-soft);
+}
+
+.stats strong {
+	display: block;
+	font-family: var(--vp-font-family-mono);
+	font-variant-numeric: tabular-nums;
+	font-size: 26px;
+	font-weight: 600;
+	line-height: 1.2;
+	color: var(--vp-c-brand-1);
+}
+
+.stats span {
+	font-size: 14px;
+	color: var(--vp-c-text-2);
+}
+
+.vp-doc .screenshot img {
+	border: 1px solid var(--vp-c-divider);
+	border-radius: 8px;
+}
+
+/* The live report is an iframe over the self-contained report.html generated at build time. */
+/* 活报告是一个 iframe，嵌入构建时生成的自包含 report.html。 */
+.report-frame {
+	display: block;
+	width: 100%;
+	height: 80vh;
+	border: 1px solid var(--vp-c-divider);
+	border-radius: 8px;
+}
