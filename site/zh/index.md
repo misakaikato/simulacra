@@ -4,8 +4,8 @@ title: simulacra
 titleTemplate: 内置稳健性审计的 LLM 社会模拟内核
 hero:
     name: simulacra
-    text: 面向 LLM 驱动社会模拟的类型化事件溯源内核，内置稳健性审计 harness。
-    tagline: 每次观察、决策与状态变化都是一条类型化事件。harness 接着追问大多数模拟论文跳过的问题：结论经得起扰动吗？
+    text: 能被审计的社会模拟
+    tagline: 面向 LLM 驱动社会模拟的类型化事件溯源内核。每次观察、决策与状态变化都是一条类型化事件，harness 接着追问大多数模拟论文跳过的问题：结论经得起扰动吗？
     image:
         src: /banner.jpg
         alt: simulacra

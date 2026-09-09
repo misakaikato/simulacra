@@ -59,6 +59,7 @@
 		"dev:mock": "bun gui/dev-mock.ts",
 		"build:site": "bun site/scripts/demo-report.ts && vitepress build site",
 		"dev:site": "vitepress dev site",
+		"preview:site": "vitepress preview site",
 		"prepublishOnly": "bun run check && bun run lint && bun test && bun run build:gui"
 	},
 	"dependencies": {

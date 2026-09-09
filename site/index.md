@@ -4,8 +4,8 @@ title: simulacra
 titleTemplate: LLM social simulation with a robustness-audit harness
 hero:
     name: simulacra
-    text: A typed, event-sourced kernel for LLM-driven social simulation, with a robustness-audit harness built in.
-    tagline: Every observation, decision and state change is a typed event. The harness then asks the question most simulation papers skip. Does the conclusion survive perturbation?
+    text: Social simulation you can audit
+    tagline: A typed, event-sourced kernel for LLM-driven social simulation. Every observation, decision and state change is a typed event, and the harness asks the question most simulation papers skip. Does the conclusion survive perturbation?
     image:
         src: /banner.jpg
         alt: simulacra
