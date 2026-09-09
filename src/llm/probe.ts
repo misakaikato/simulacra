@@ -6,6 +6,7 @@
 
 import type { LLMRequest } from "../core/protocols";
 import { LLMSpecSchema } from "../core/schema";
+import type { LLMSpec } from "../core/types";
 import { silentLogger } from "../logging/logger";
 import { createGateway, type FetchLike } from "./gateway";
 
@@ -25,6 +26,11 @@ export interface ProbeOptions {
 	readonly model: string;
 	readonly apiKey: string;
 	readonly timeoutMs?: number;
+	// Endpoint-specific body fields, e.g. DeepSeek's thinking switch. Without it a reasoning
+	// model spends the whole 32-token probe budget on reasoning and the probe reports truncated.
+	// 端点特有的请求体字段，例如 DeepSeek 的 thinking 开关。不带它时，推理模型会把 32 个 token 的
+	// 探测预算全用在推理上，探测结果报 truncated。
+	readonly extra?: LLMSpec["extra"];
 }
 
 export interface ProbeCheck {
@@ -72,6 +78,7 @@ export const probeEndpoint = async (opts: ProbeOptions): Promise<ProbeResult> =>
 		concurrency: { initial: PARALLEL, max: PARALLEL },
 		budget: { maxCalls: PROBE_MAX_CALLS, maxCompletionTokens: 32 },
 		timeoutMs: opts.timeoutMs ?? 30000,
+		...(opts.extra === undefined ? {} : { extra: opts.extra }),
 	});
 	const gateway = createGateway(spec, { logger: silentLogger, fetch: authorized(opts.apiKey) });
 	const structured = await gateway.complete(
@@ -100,13 +107,18 @@ export const probeEndpoint = async (opts: ProbeOptions): Promise<ProbeResult> =>
 			cachedTokens: false,
 			calls: gateway.ledger().llmCalls,
 		};
+	// An optional capability with a working fallback, reported like cached_tokens below: the
+	// gateway switches to prompt mode on its own, so its absence is not a broken environment.
+	// ProbeResult.jsonSchema stays the machine-readable answer.
+	// 一个有可用降级路径的可选能力，与下方的 cached_tokens 同样处理：网关会自行切到 prompt 模式，
+	// 缺少它并不代表环境有问题。机器可读的答案仍在 ProbeResult.jsonSchema。
 	const jsonSchema = structured.value.structured === "json_schema";
 	checks.push({
 		name: "json_schema",
-		ok: jsonSchema,
+		ok: true,
 		detail: jsonSchema
 			? "response_format json_schema accepted"
-			: "endpoint rejected json_schema, prompt mode used",
+			: "endpoint rejected json_schema, prompt mode used instead",
 	});
 	const parallel = await gateway.completeMany(
 		Array.from({ length: PARALLEL }, (_, i) =>
