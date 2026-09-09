@@ -312,6 +312,7 @@ class KernelSimulation implements Simulation {
 	private readonly pendingInstructions = new Map<EntityId, string>();
 	private tickLogger: Logger;
 	private eventRng: Rng;
+	private readonly resolveSeq = new Map<string, number>();
 	private lastEventId: EventId = ZERO_EVENT_ID;
 	private initialized = false;
 	private boundaryEvents = 0;
@@ -535,6 +536,7 @@ class KernelSimulation implements Simulation {
 		const tick = this.clock.now.tick;
 		const tickRng = this.rootRng.fork(tick);
 		this.eventRng = tickRng.fork(keyFromLabel("events"));
+		this.resolveSeq.clear();
 		this.tickLogger = this.logger.child({ tick });
 		const before = { ...this.counts };
 		let runFailure: FailureInfo | undefined;
@@ -1622,10 +1624,15 @@ class KernelSimulation implements Simulation {
 		return this.resolve({ ...validated.value, cause: event.eventId }, tickRng, MANUAL);
 	}
 
-	// Each call gets an rng forked from executor, action and cause event id, so two agents
-	// resolving the same action in one tick never draw the same entity ids.
-	// 每次调用的 rng 由执行体、动作与 cause 事件 id 派生，同 tick 内解析同一动作的两个 agent
-	// 永远不会抽到相同的实体 id。
+	// Each call gets an rng forked from executor, action, agent and the call's ordinal within the
+	// tick, so two agents resolving the same action never draw the same entity ids and one agent
+	// resolving it twice continues a fresh stream. The label deliberately excludes the cause event
+	// id: event ids move whenever a bookkeeping event (a gateway fallback notice, say) is written
+	// in one run and not another, and entity ids that reach a prompt must not depend on that.
+	// 每次调用的 rng 由执行体、动作、agent 与该调用在本 tick 内的序号派生，解析同一动作的两个 agent
+	// 不会抽到相同的实体 id，同一 agent 解析两次也各走一条流。标签刻意不含 cause 事件 id：只要某次
+	// 运行多写了一条记账事件（例如网关的降级通知），事件 id 就会整体移位，而会进入 prompt 的实体 id
+	// 绝不能依赖它。
 	private async resolve(
 		call: ActionCall,
 		tickRng: Rng,
@@ -1633,11 +1640,11 @@ class KernelSimulation implements Simulation {
 	): Promise<readonly Effect[]> {
 		const def = this.registry.actions.get(call.name);
 		if (def === undefined) return [];
+		const key = `${label}:${call.name}:${call.agentId}`;
+		const ordinal = this.resolveSeq.get(key) ?? 0;
+		this.resolveSeq.set(key, ordinal + 1);
 		try {
-			return await def.resolve(
-				call,
-				this.resolveContext(tickRng, `${label}:${call.name}:${call.cause}`),
-			);
+			return await def.resolve(call, this.resolveContext(tickRng, `${key}:${ordinal}`));
 		} catch (e) {
 			const d = describeError(e);
 			if (e instanceof ActionRejected) this.counts.rejectedActions += 1;
