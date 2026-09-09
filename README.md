@@ -328,11 +328,9 @@ Commit messages follow one fixed form, `<emoji> <type>(<scope>): <summary>`, in 
 | refactor | ♻️    | structure without behavior change    |
 | perf     | ⚡    | benchmarks and performance work      |
 | test     | 🧪    | tests only                           |
-| docs     | 📝    | README, specs, decisions             |
+| docs     | 📝    | README and site documentation        |
 | chore    | 🔧    | tooling, dependencies, configuration |
 | merge    | 🔀    | merge commits                        |
-
-Specifications live in `specs/` and decisions in `decisions/`; both are the source of truth for behavior the code alone does not explain.
 
 ## References
 

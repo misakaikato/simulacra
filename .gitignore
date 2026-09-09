@@ -13,3 +13,5 @@ site/.vitepress/cache/
 site/public/demo/
 site/public/banner.jpg
 site/public/screenshots/
+specs/
+decisions/

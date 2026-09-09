@@ -3,8 +3,6 @@ dist/
 gui/dist/
 simulacra-data/
 bun.lock
-specs/
-decisions/
 .claude/worktrees/
 bench/RESULTS.md
 site/.vitepress/dist/
